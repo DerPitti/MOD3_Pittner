@@ -1,6 +1,8 @@
 library(readxl)
 library(dplyr)
 library(ggplot2)
+library(future.apply)
+
 grunddaten <- read_xlsx("data/tbl_grunddaten.xlsx") # load basic data for each plot, e.g. biotopcodes
 plants <- read_xlsx("data/tbl_daten_pflanzen.xlsx") # load plant data
 
@@ -50,6 +52,7 @@ library(dplyr)
 remove_polygons <- filter(grunddaten, substr(`Biotoptyp-Land`,1,1) %in% c("F", "V"))
 
 plants_sub <- filter(plants, !Polygon %in% remove_polygons$Polygon)
+grunddaten_sub <- filter(grunddaten, !Polygon %in% remove_polygons$Polygon)
 
 
 # Hellinger transformation ------------------------------------------------
@@ -82,6 +85,61 @@ plants_clean2$Menge <- as.numeric(plants_clean2$Menge)
 plants_wide <- pivot_wider(plants_clean2[,c(1,2,4)],names_from = `Wissenschaftlicher Name`,values_from = Menge)
 plants_wide[is.na(plants_wide)] <- 0
 
+# check that every plot has plants
+summary(rowSums(plants_wide[,-1]))
+plants_sum <- cbind(rowSums(plants_wide[,-1]),plants_wide)
+order(rowSums(plants_wide[,-1]))
+
+### find outlier plots
+
+# Community abundance-weighted transformation
+plants_weighted <- plants_wide[,-1]
+plants_weighted[plants_weighted == 1] <- 0.01
+plants_weighted[plants_weighted == 2] <- 0.05
+plants_weighted[plants_weighted == 3] <- 0.25
+plants_weighted[plants_weighted == 4] <- 0.75
+
+bray_curtis_dist_weighted <- vegdist(plants_weighted, method = "bray")
+
+options(future.validate = FALSE)
+plan(multisession, workers = parallel::detectCores() - 2) # start multisession, use all cores except two
+
+ord_new <- metaMDS(bray_curtis_dist_weighted, k = 2)
+plot(ord_new, type = "t")
+stressplot(ord_new)
+
+
+which(is.finite(ord$points[,1]) & 
+        abs(scale(ord$points[,1])) > 3 |
+        abs(scale(ord$points[,2])) > 3)
+
+ord$points[order(ord$points[,1], decreasing = TRUE),] # 711, 1033, 1901 seem to be outlier
+
+
+filter(plants_clean2, Polygon %in% plants_wide$Polygon[order(ord$points[,1], decreasing = TRUE)[1:3]])
+
+# find all plants with only few entries
+plants_occurences <- plants_wide[,-1] %>%
+  mutate(across(everything(), ~ if_else(. > 0, 1L, 0L)))%>%
+  summarise(across(everything(), sum, na.rm=TRUE))%>%
+  pivot_longer(everything(), names_to = "species", values_to = "total") %>%
+  arrange(total)
+
+filter(plants_occurences, species %in% c("Ulmus spec.","Robinia pseudoacacia"))
+
+suspicious_polygons <- filter(grunddaten_sub, Polygon %in% plants_wide$Polygon[order(ord$points[,1], decreasing = TRUE)[1:3]])
+# 01728 will be removed, because only one plant found, and in 04567, Ulmus spec. will be specified to Ulmus glabra accordingly to Beschreibung
+
+plants_clean2 <- plants_clean2 %>%
+  filter(Polygon != "01728") %>%
+  mutate(`Wissenschaftlicher Name` = if_else(`Wissenschaftlicher Name`=="Ulmus spec.", "Ulmus glabra", `Wissenschaftlicher Name`))
+
+plants_wide <- pivot_wider(plants_clean2[,c(1,2,4)],names_from = `Wissenschaftlicher Name`,values_from = Menge)
+plants_wide[is.na(plants_wide)] <- 0
+
+grunddaten_sub <- grunddaten_sub %>%
+  filter(Polygon != "01728")
+
 # Hellinger transformation to subsequently compute Euclidean distance
 plants_hell <- hellinger(plants_wide[,-1])
 test_dist <- dist(plants_hell)
@@ -112,6 +170,8 @@ plants_weighted[plants_weighted == 4] <- 0.75
 
 bray_curtis_dist_weighted <- vegdist(plants_weighted, method = "bray")
 
+# https://uw.pressbooks.pub/appliedmultivariatestatistics/chapter/common-distance-measures/
+
 # Ward's algorithm with Bray-Curtis distance metric: https://www.davidzeleny.net/anadat-r/doku.php/en:class-eval_examples
 
 # HDBSCAN: https://rdrr.io/cran/dbscan/f/vignettes/hdbscan.Rmd
@@ -129,13 +189,12 @@ for (k in seq(5, 15,by = 2)) {
       " noise:", sum(h$cluster == 0), "\n")
 }
 
-test_hdb_bcd_weighted <- hdbscan(bray_curtis_dist_weighted, minPts = 5)
+test_hdb_bcd_weighted <- hdbscan(bray_curtis_dist_weighted, minPts = 6)
 table(test_hdb_bcd_weighted$cluster)
 
 
 
-ord <- metaMDS(bray_curtis_dist_weighted, k = 2)
-plot(ord, type = "t")
+
 
 # For euclidean distance
 test_hdb2 <- hdbscan(dist_hel, minPts = 10)
@@ -150,10 +209,16 @@ ord <- metaMDS(bray_curtis_dist, k = 2, trymax = 100)
 plot(ord, type = "t")
 
 
-coords <- as.data.frame(scores(ord))
-coords$cluster <- factor(test_hdb$cluster)
+coords <- as.data.frame(scores(ord_new))
+coords$cluster <- factor(test_hdb_bcd_weighted$cluster)
 
-ggplot(coords, aes(Dim1, Dim2, color = cluster)) +
+test_cluster_bt <- data.frame(cbind(cluster=test_hdb_bcd_weighted$cluster, number= test_hdb_bcd_weighted$hc$order))
+test_cluster_bt <- test_cluster_bt%>%
+  arrange(number)
+test_cluster_bt <- cbind(test_cluster_bt, Polygon=plants_wide$Polygon)
+join_cluster_code <- inner_join(test_cluster_bt, grunddaten_sub[,c(1,2,4)], by = "Polygon")
+
+ggplot(coords, aes(NMDS1, NMDS2, color = cluster)) +
   geom_point(size = 2, alpha = 0.8) +
   scale_color_manual(
     values = c("0" = "grey70", scales::hue_pal()(length(unique(coords$cluster)) - 1))
