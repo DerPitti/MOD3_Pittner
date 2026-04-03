@@ -1,0 +1,495 @@
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(future.apply)
+library(tidyr)
+library(dplyr)
+library(vegan)
+library(dbscan)
+library(future)
+library(future.apply)
+
+plan(multisession, workers = parallel::detectCores() - 5)
+
+source("clusteranalysis_functions.R")
+
+grunddaten <- read_xlsx("data/tbl_grunddaten.xlsx") # load basic data for each plot, e.g. biotopcodes
+plants <- read_xlsx("data/tbl_daten_pflanzen.xlsx") # load plant data
+life_forms <- read_xlsx("data/Life_form.xlsx") # load life form data https://floraveg.eu/download/
+
+# group biotope codes
+grunddaten$BT_Bund_group <- substr(grunddaten$`Biotoptyp-Bund`,1,5)
+grunddaten$BT_Land_group <- substr(grunddaten$`Biotoptyp-Land`,1,2)
+
+# find plots with completely identical attributes
+duplicates <- grunddaten %>%
+                 group_by(grunddaten[,-1])%>%
+                 filter(n()>1) %>%
+                 ungroup()
+
+
+# Removal of data sets with non-meaningful plant composition --------------
+
+remove_polygons <- filter(grunddaten, substr(`Biotoptyp-Land`,1,1) %in% c("F", "V", "W")) # maybe G and H as well
+# check that every plot has plants
+remove_polygons2 <- filter(grunddaten, !Polygon %in% plants$Polygon & !substr(`Biotoptyp-Land`,1,1) %in% c("F", "V", "W"))
+
+remove_poly <- rbind(remove_polygons, remove_polygons2)
+
+plants_sub <- filter(plants, !Polygon %in% remove_poly$Polygon)
+grunddaten_sub <- filter(grunddaten, !Polygon %in% remove_poly$Polygon)
+
+
+# transformation of plant data frame
+
+# remove duplicate rows
+plants_clean <- plants_sub %>%
+  dplyr::distinct(Polygon, `Wissenschaftlicher Name`, Menge, .keep_all = TRUE)
+
+# only keep row with highest abundance
+plants_clean2 <- plants_clean %>%
+  dplyr::arrange(Polygon, `Wissenschaftlicher Name`, desc(Menge)) %>%
+  dplyr::distinct(Polygon, `Wissenschaftlicher Name`, .keep_all = TRUE
+  )
+
+plants_clean2$Menge <- as.numeric(plants_clean2$Menge) # transform abundances to numeric
+
+
+### find outlier plots
+
+# 01728 will be removed, because only one plant found, and in 04567, Ulmus spec. will be specified to Ulmus glabra accordingly to Beschreibung
+plants_clean2 <- plants_clean2 %>%
+  filter(Polygon != "01728") %>%
+  mutate(`Wissenschaftlicher Name` = if_else(`Wissenschaftlicher Name`=="Ulmus spec.", "Ulmus glabra", `Wissenschaftlicher Name`))
+
+plants_wide <- plant_widening(plants_clean2)
+
+grunddaten_sub <- grunddaten_sub %>% # remove 01728 also from grunddaten
+  filter(Polygon != "01728")
+
+# Separation of biotope types ---------------------------------------------
+
+grunddaten_grass <- filter(grunddaten_sub, substr(`Biotoptyp-Land`,1,1) %in% c("E"))
+plants_grass <- filter(plants_wide, Polygon %in% grunddaten_grass$Polygon)
+
+grunddaten_forests <- filter(grunddaten_sub, substr(`Biotoptyp-Land`,1,1) %in% c("A"))
+plants_forests <- filter(plants_wide, Polygon %in% grunddaten_forests$Polygon)
+
+# further reduction of forest data ---------------------------------------------
+
+# remove "AT... and "AU..."
+grunddaten_forests_red <- filter(grunddaten_forests, !substr(`Biotoptyp-Land`,1,2) %in% c("AT", "AU"))
+plants_forests_red <- filter(plants_forests, Polygon %in% grunddaten_forests_red$Polygon)
+
+### store plants and grunddaten in list for looping later, each list entry contains two list entries with first plants, then grunddaten
+
+data_list <- list()
+data_list[["forest_complete"]] <-  list(plants = plants_forests_red, grunddaten = grunddaten_forests_red)
+
+# remove all polygons which only have a few plant entries
+
+forest_complete_wone <- remove_plots(plants_forests_red, grunddaten_forests_red, remove_count = c(0,1))
+check_empty_plot(forest_complete_wone[[1]])
+
+data_list[["forest_complete_wone"]] <- forest_complete_wone
+
+forest_complete_wtwo <- remove_plots(plants_forests_red, grunddaten_forests_red, remove_count = c(0:2))
+data_list[["forest_complete_wtwo"]] <- forest_complete_wtwo
+
+forest_complete_wthree <- remove_plots(plants_forests_red, grunddaten_forests_red, remove_count = c(0:2))
+data_list[["forest_complete_wthree"]] <- forest_complete_wthree
+
+# add life forms
+plants_occ <- plant_occurences(plant_data = plants_forests_red)
+
+plants_occ$short <- sub("(\\w+\\s+\\w+).*", "\\1", plants_occ$species)
+plants_occ$short <- sub("(\\w+).*", "\\1", plants_occ$species)
+life_forms$short <- sub("(\\w+).*", "\\1", life_forms$FloraVeg.Taxon)
+
+plants_LF <- left_join(plants_occ,life_forms, by = "short",multiple = "any")
+
+trees <- filter(plants_LF, Tree == 1)
+trees <- filter(trees, species %in% colnames(plants_forests))
+
+plants_forest_trees <- plants_forests_red[c("Polygon",trees$species)]
+
+plants_occ_forests <- plant_occurences(plants_forest_trees)
+
+# remove plants which only occured once or twice across all plots
+plants_f_trees_w_zero <- filter(plants_occ_forests, !total %in% c(0)) # maybe also 2
+plants_f_trees_wzero <- plants_forests_red[c("Polygon",plants_f_trees_w_zero$species)] # take all 
+
+plants_f_trees_w_one <- filter(plants_occ_forests, !total %in% c(0,1)) # maybe also 2
+plants_f_trees_wone <- plants_forests_red[c("Polygon",plants_f_trees_w_one$species)] # take all 
+# I'm using the plants_f_trees_wone for further reduction of the data
+
+plant_data <- plants_forests_red
+plants_data_red <- plant_data[-1]
+plants_data_red[plants_data_red > 0] <- 1
+plants_data <-  filter(plant_data, !rowSums(plants_data_red) %in% remove_count)
+
+# check number of plant species per plot -------------------------------------------------
+
+check_empty_plot(plants_f_trees_wone)
+
+test <- remove_plots(plants_f_trees_wone, grunddaten_forests_red)
+check_empty_plot(test[[1]])
+
+plant_occurences(plants_forests_red)
+
+#### further curation of data into smaller, cleaner data sets necessary!!!
+
+
+# NMDS loop ---------------------------------------------------------------
+weighting <- data.frame(imbalanced = c(0.01,0.01,0.01,1),
+                        balanced = c(0.01,0.05,0.25,0.75))
+stress_vals <- list(imbalanced = list(), balanced = list())
+
+for(i in 1:2){
+  for (o in 1:length(data_list)) {
+    plants <- data_list[[o]][[1]]
+    plant_mat <- plant_weighting(plants,weighting[1,i],weighting[2,i],weighting[3,i],weighting[4,i])
+    plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
+    # find best dimensionality: via NMDS slowly...
+    stress_vals[[i]][[o]] <- future_sapply(2:6, function(k){
+      median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = FALSE)$stress))
+  })
+  }
+}
+
+for(i in stress_vals){
+  sapply(i, function(x){
+    plot(2:6, x, type = "b")
+    # approximate "elbow"
+    diff1 <- diff(x)
+    diff2 <- diff(diff1)
+    
+    k_opt <- which.min(diff2) + 1
+    k_opt
+  })
+}
+
+
+
+
+
+# evaluation of hdbscan clustering
+valid <- hdbscan_forest_reduced$cluster != 0
+
+clusters_hdb <- hdbscan_forest_reduced$cluster[valid]
+labels   <- grunddaten_forests_red[valid,] # check structure!!!
+
+tab <- table(clusters_hdb, labels$`Biotoptyp-Bund`)
+
+# Purity: How dominant is the main class within each cluster:
+# > 0.8	very good; 0.6–0.8	reasonable; < 0.6	weak
+#install.packages("clue")
+library(clue)
+cl_agreement(as.cl_partition(clusters_hdb),
+             as.cl_partition(labels$`Biotoptyp-Bund`),
+             method = "purity")
+
+# Adjusted Rand Index: ~0	random; 0.2–0.4	weak structure; 0.4–0.6	moderate; >0.6	strong; >0.8	excellent
+library(mclust)
+adjustedRandIndex(clusters_hdb, labels$`Biotoptyp-Bund`)
+
+# cluster-wise purity
+prop.table(tab, margin = 1)
+
+
+
+# ordination to plot hdbscan in 2-dimensional space
+plants_forests_bray_ord <- metaMDS(plants_forests_rel_short, k = 2, trymax = 10) # 2-dimensional NMDS
+plot(plants_forests_rel_ord, type = "t") # plot NMDS to see if pattern exists -> no..., but outliers
+
+plants_forests_rel_ord$stress
+stressplot(plants_forests_rel_ord)
+
+# find outliers in nmds ordination
+outlier_hdbscan <- which(is.finite(plants_forests_rel_ord$points[,1]) & 
+        abs(scale(plants_forests_rel_ord$points[,1])) > 3 |
+        abs(scale(plants_forests_rel_ord$points[,2])) > 3)
+outlier_hdbscan
+
+plants_forests_rel_ord$points[order(plants_forests_rel_ord$points[,1], decreasing = TRUE),]
+
+
+check_forest_outliers <- filter(plants_forests_red, Polygon %in% plants_forests_red$Polygon[order(plants_forests_rel_ord$points[,1], decreasing = TRUE)[1:3]])
+check_forest_outliers <- plants_forests_red[outlier_hdbscan,]
+filter(grunddaten_forests_red, Polygon %in% plants_forests_red$Polygon[order(plants_forests_rel_ord$points[,1], decreasing = TRUE)[1:3]])
+
+
+# find best dimensionality: via NMDS slowly...
+stress_vals <- future_sapply(2:6, function(k)
+  metaMDS(plants_forests_rel_short, k = k, trymax = 3, trace = FALSE)$stress)
+
+plot(2:6, stress_vals, type = "b")
+
+# approximate "elbow"
+diff1 <- diff(stress_vals)
+diff2 <- diff(diff1)
+
+k_opt <- which.min(diff2) + 1
+k_opt
+
+plants_forests_rel_ord_5 <- metaMDS(plants_forests_rel_short, k = 5, trymax = 10) # 2-dimensional NMDS
+plot(plants_forests_rel_ord_5, type = "t") # plot NMDS to see if pattern exists -> no..., but outliers
+
+plants_forests_rel_ord_5$stress
+stressplot(plants_forests_rel_ord_5)
+
+# use NMDS data for hdbscan
+hdbscan_minClusSize(plants_forests_rel_ord_5$points)
+hdbscan_evaluation(plants_forests_rel_ord_5$points, k = 11)
+clusterVScode(plants_forests_rel_ord_5$points, 11, grunddaten_forests_red, FALSE)
+hdbscan_forest_red_5 <- hdbscan(plants_forests_rel_ord_5$points, 11)
+
+# evaluation of hdbscan clustering
+valid <- hdbscan_forest_red_5$cluster != 0
+
+clusters_hdb_5 <- hdbscan_forest_red_5$cluster[valid]
+labels   <- grunddaten_forests_red[valid,] # check structure!!!
+
+tab <- table(clusters_hdb_5, labels$`Biotoptyp-Bund`)
+
+# Purity: How dominant is the main class within each cluster:
+# > 0.8	very good; 0.6–0.8	reasonable; < 0.6	weak
+#install.packages("clue")
+cl_agreement(as.cl_partition(clusters_hdb_5),
+             as.cl_partition(labels$`Biotoptyp-Bund`),
+             method = "purity")
+
+# Adjusted Rand Index: ~0	random; 0.2–0.4	weak structure; 0.4–0.6	moderate; >0.6	strong; >0.8	excellent
+#library(mclust)
+adjustedRandIndex(clusters_hdb_5, labels$`Biotoptyp-Bund`)
+
+# display just first two NMDS axes
+plot_data <- as.data.frame(plants_forests_rel_ord_5$points[, 1:2])
+plot_data$cluster <- factor(hdbscan_forest_red_5$cluster)
+
+plot(plot_data)
+
+# project multidemensional data into 2-D
+pca <- prcomp(plants_forests_rel_ord_5$points)
+
+plot_data <- as.data.frame(pca$x[, 1:2])
+plot_data$cluster <- factor(hdbscan_forest_red_5$cluster)
+
+ggplot(plot_data, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  #scale_color_manual(values = c("0" = "grey70")) +
+  theme_minimal()
+
+plot_data$biotope <- grunddaten_forests_red$`Biotoptyp-Bund`
+ggplot(plot_data, aes(PC1, PC2, color = biotope)) +
+  geom_point(size = 2) +
+  theme_minimal()
+
+ggplot(plot_data, aes(PC1, PC2, color = cluster)) +
+  geom_point() +
+  stat_ellipse() +
+  theme_minimal()
+
+
+# 3D-plotting -------------------------------------------------------------
+
+library(plotly)
+
+# Use first 3 NMDS dimensions
+df <- as.data.frame(plants_forests_rel_ord_5$points[, 1:3])
+colnames(df) <- c("NMDS1", "NMDS2", "NMDS3")
+
+df$cluster <- factor(hdbscan_forest_red_5$cluster)
+df$biotope <- grunddaten_forests_red$`Biotoptyp-Bund`
+
+plot_ly(df,
+        x = ~NMDS1,
+        y = ~NMDS2,
+        z = ~NMDS3,
+        color = ~cluster,
+        colors = "Set1",
+        type = "scatter3d",
+        mode = "markers",
+        marker = list(size = 3)) %>%
+  layout(scene = list(xaxis = list(title = "NMDS1"),
+                      yaxis = list(title = "NMDS2"),
+                      zaxis = list(title = "NMDS3")))
+
+# for biotope colouring
+colourCount = length(unique(df$biotope))
+getPalette = colorRampPalette(colors = c("red","green", "blue"))
+
+plot_ly(df,
+        x = ~NMDS1,
+        y = ~NMDS2,
+        z = ~NMDS3,
+        color = ~biotope,
+        colors = getPalette(colourCount),
+        type = "scatter3d",
+        mode = "markers")
+
+# with hovering
+df$label <- paste("Cluster:", df$cluster,
+                  "<br>Biotope:", df$biotope)
+
+plot_ly(df,
+        x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
+        color = ~cluster,
+        colors = getPalette(colourCount),
+        text = ~label,
+        hoverinfo = "text",
+        type = "scatter3d",
+        mode = "markers")
+
+# looking to understand the mismatch in cluster and biotope codes
+tab <- table(hdbscan_forest_red_5$cluster, grunddaten_forests_red$`Biotoptyp-Bund`)
+dominant <- apply(tab, 1, function(x) names(which.max(x)))
+
+df$cluster_main <- dominant[as.character(df$cluster)]
+df$mismatch <- df$biotope != df$cluster_main
+
+plot_ly(df,
+        x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
+        color = ~mismatch,
+        colors = c("FALSE" = "black", "TRUE" = "red"),
+        type = "scatter3d",
+        mode = "markers")
+
+# reveal indicator species
+library(indicspecies)
+
+res <- multipatt(plants_forests_rel_short, hdbscan_forest_red_5$cluster, control = how(nperm=999))
+summary(res)
+
+#alternative
+pcoa <- cmdscale(plants_forests_bray_short, k = 6)
+apply(pcoa, 2, var)
+pcoa_hdb <- hdbscan(pcoa[, 1:5], minPts = 10)
+table(pcoa_hdb$cluster, grunddaten_forests_red$`Biotoptyp-Bund`)
+
+# Need to check later... --------------------------------------------------
+
+
+
+
+# Hierarchical clustering
+hc_forests <- hclust(plants_forests_bray, method = "ward.D2")
+plot(hc_forests)
+clusters <- cutree(hc_forests, k = 5) # ???
+plot(clusters)
+
+# Evaluation of cluster number
+library(factoextra)
+fviz_nbclust(plants_forests_rel_short, FUN = hcut, method = "silhouette", k.max = 25)
+#library(cluster)
+sil <- silhouette(clusters, dist_bc)
+mean(sil[,3])
+
+# Model-based clusterin
+library(mclust)
+mc <- Mclust(cmdscale(dist_bc, k=10)$points)
+
+# Spectral clustering
+library(kernlab)
+sc <- specc(as.matrix(plants_forests_bray), centers = 6)
+
+
+
+
+hdbscan_forest <- hdbscan(plants_forests_bray_short, minPts = 7)
+codes_forests_hdb <- cbind(hdbscan_forest$cluster, grunddaten_forests[,c(1,2,4)])
+
+t(table(hdbscan_forest$cluster, grunddaten_forests$`Biotoptyp-Bund`))
+t(table(hdbscan_forest$cluster, grunddaten_forests$`Biotoptyp-Land`))
+
+prop.table(table(hdbscan_forest$cluster, grunddaten_forests$`Biotoptyp-Land`), margin=1)
+
+
+# Reduced dataset ---------------------------------------------------------
+
+
+# Hellinger transformation to subsequently compute Euclidean distance
+plants_hell <- hellinger(plants_wide[,-1])
+test_dist <- dist(plants_hell)
+
+#Alternative...
+comm_hel <- decostand(plants_wide[,-1], method = "hellinger")
+dist_hel <- dist(comm_hel, method = "euclidean")
+
+# Bray-Curtis dissimilarity with raw abundance data
+
+bray_curtis_dist <- vegdist(plants_wide[,-1], method = "bray")
+
+# Gower distance
+library(cluster)
+
+# convert species abundances into ordered factors
+comm_ord <- as.data.frame(plants_wide[,-1])
+comm_ord[] <- lapply(plants_wide[,-1], ordered)
+
+dist_gower <- daisy(comm_ord, metric = "gower")
+
+# Community abundance-weighted transformation
+plants_weighted <- plants_wide[,-1]
+plants_weighted[plants_weighted == 1] <- 0.01
+plants_weighted[plants_weighted == 2] <- 0.05
+plants_weighted[plants_weighted == 3] <- 0.25
+plants_weighted[plants_weighted == 4] <- 0.75
+
+bray_curtis_dist_weighted <- vegdist(plants_weighted, method = "bray")
+
+# https://uw.pressbooks.pub/appliedmultivariatestatistics/chapter/common-distance-measures/
+
+# Ward's algorithm with Bray-Curtis distance metric: https://www.davidzeleny.net/anadat-r/doku.php/en:class-eval_examples
+
+# HDBSCAN: https://rdrr.io/cran/dbscan/f/vignettes/hdbscan.Rmd
+
+# https://r.qcbs.ca/workshop09/book-en/clustering.html
+
+
+
+test_hdb <- hdbscan(bray_curtis_dist, minPts = 10)
+table(test_hdb$cluster)
+
+
+test_hdb_bcd_weighted <- hdbscan(bray_curtis_dist_weighted, minPts = 6)
+table(test_hdb_bcd_weighted$cluster)
+
+
+
+
+
+# For euclidean distance
+test_hdb2 <- hdbscan(dist_hel, minPts = 10)
+table(test_hdb2$cluster)
+
+# For Gower distance
+test_hdb_gower <- hdbscan(dist_gower, minPts = 10)
+table(test_hdb_gower$cluster)
+
+# for plotting, dimensionality reduction of distance matrix (ordination)
+ord <- metaMDS(bray_curtis_dist, k = 2, trymax = 100)
+plot(ord, type = "t")
+
+
+coords <- as.data.frame(scores(ord))
+coords$cluster <- factor(grass_hdbscan$cluster)
+
+test_cluster_bt <- data.frame(cbind(cluster=test_hdb_bcd_weighted$cluster, number= test_hdb_bcd_weighted$hc$order))
+test_cluster_bt <- test_cluster_bt%>%
+  arrange(number)
+test_cluster_bt <- cbind(test_cluster_bt, Polygon=plants_wide$Polygon)
+join_cluster_code <- inner_join(test_cluster_bt, grunddaten_sub[,c(1,2,4)], by = "Polygon")
+
+ggplot(coords, aes(NMDS1, NMDS2, color = cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  #scale_color_manual(
+   # values = c("0" = "grey70", scales::hue_pal()(length(unique(coords$cluster)) - 1))
+  #) +
+  labs(
+    title = "HDBSCAN Clustering (PCoA of Bray–Curtis)",
+    x = "PCoA 1",
+    y = "PCoA 2",
+    color = "Cluster"
+  ) +
+  theme_minimal()
