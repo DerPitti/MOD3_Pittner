@@ -7,6 +7,8 @@ library(dplyr)
 library(vegan)
 library(dbscan)
 
+source("clusteranalysis_functions.R")
+
 grunddaten <- read_xlsx("data/tbl_grunddaten.xlsx") # load basic data for each plot, e.g. biotopcodes
 plants <- read_xlsx("data/tbl_daten_pflanzen.xlsx") # load plant data
 life_forms <- read_xlsx("data/Life_form.xlsx") # load life form data https://floraveg.eu/download/
@@ -15,6 +17,11 @@ life_forms <- read_xlsx("data/Life_form.xlsx") # load life form data https://flo
 length(unique(grunddaten$`Biotoptyp-Bund`)) # number of unique state biotope codes
 length(unique(grunddaten$`Biotoptyp-Land`)) # number of unique rhineland-palatinatian biotope codes
 length(unique(plants$`Wissenschaftlicher Name`)) # number of unique found plants
+
+grunddaten$BT_Bund_group <- substr(grunddaten$`Biotoptyp-Bund`,1,5)
+grunddaten$BT_Land_group <- substr(grunddaten$`Biotoptyp-Land`,1,2)
+length(unique(grunddaten$BT_Bund_group))
+length(unique(grunddaten$BT_Land_group))
 
 # find plots with completely identical attributes
 nrow(grunddaten %>%
@@ -90,12 +97,7 @@ plants_clean2 <- plants_clean %>%
 
 plants_clean2$Menge <- as.numeric(plants_clean2$Menge) # transform abundances to numeric
 
-# widening of plant data
-plant_widening <- function(plant_data){
-  plants_wide <- pivot_wider(plant_data[,c(1,2,4)],names_from = `Wissenschaftlicher Name`,values_from = Menge)
-  plants_wide[is.na(plants_wide)] <- 0
-  return(plants_wide)
-}
+
 plants_wide <- plant_widening(plants_clean2)
 
 # check that every plot has plants
@@ -107,15 +109,7 @@ order(rowSums(plants_wide[,-1]))
 
 ### find outlier plots
 
-# Community abundance-weighted transformation
-plant_weighting <- function(plant_data, w1 = 0.01, w2 = 0.01, w3 = 0.01, w4 = 1){
-  plants_weighted <- plant_data[,-1]
-  plants_weighted[plants_weighted == 1] <- w1 # 0.01
-  plants_weighted[plants_weighted == 2] <- w2 # 0.05
-  plants_weighted[plants_weighted == 3] <- w3 # 0.25
-  plants_weighted[plants_weighted == 4] <- w4 # 0.75
-  return(plants_weighted)
-  }
+
 
 # first attempt to see if clustering might be successful
 
@@ -131,9 +125,7 @@ plot(ord_new, type = "t") # plot NMDS to see if pattern exists -> no..., but out
 stressplot(ord_new)
 
 # find outliers in nmds ordination
-which(is.finite(ord$points[,1]) & 
-        abs(scale(ord$points[,1])) > 3 |
-        abs(scale(ord$points[,2])) > 3)
+hdbscan_outlier_func(ord)
 
 ord$points[order(ord$points[,1], decreasing = TRUE),] # 711, 1033, 1901 seem to be outlier
 
@@ -150,15 +142,6 @@ plants_wide <- plant_widening(plants_clean2)
 grunddaten_sub <- grunddaten_sub %>% # remove 01728 also from grunddaten
   filter(Polygon != "01728")
 
-# find all plants with only few entries
-plant_occurences <- function(plant_data){
-  plants <- plant_data[,-1] %>%
-    mutate(across(everything(), ~ if_else(. > 0, 1L, 0L)))%>%
-    summarise(across(everything(), sum, na.rm=TRUE))%>%
-    pivot_longer(everything(), names_to = "species", values_to = "total") %>%
-    arrange(total)
-  return(plants)
-}
 
 plants_occ <- plant_occurences(plant_data = plants_wide)
 
@@ -179,31 +162,10 @@ plants_forests <- filter(plants_wide, Polygon %in% grunddaten_forests$Polygon)
 plants_grass_w <- plant_weighting(plants_grass, 0.01, 0.05, 0.25, 0.75)
 grass_bc_dist_weighted <- vegdist(plants_grass_w, method = "bray")
 
-hdbscan_minClusSize <- function(distance_data){
-  for (k in seq(3, 15,by = 2)) {
-    h <- hdbscan(distance_data, minPts = k)
-    cat("minPts =", k, "-> clusters:", length(unique(h$cluster)), 
-        " noise:", sum(h$cluster == 0), "\n")
-  }
-  
-}
 
 hdbscan_minClusSize(grass_bc_dist_weighted)
 
-hdbscan_evaluation <- function(dist_mat, k){
-  dist_hdbscan <- hdbscan(dist_mat, minPts = k)
-  table(dist_hdbscan$cluster)
-}
 hdbscan_evaluation(grass_bc_dist_weighted, k= 7)
-
-clusterVScode <- function(plants_dist, pts, grunddat, bund = TRUE){
-  hdbscan_plants <- hdbscan(plants_dist, minPts = pts)
-  if(bund == TRUE)
-    {t(table(hdbscan_plants$cluster, grunddat$`Biotoptyp-Bund`))}
-  else {
-    t(table(hdbscan_plants$cluster, grunddat$`Biotoptyp-Land`))
-  }
-}
 
 clusterVScode(grass_bc_dist_weighted, 7, grunddaten_grass)
 clusterVScode(grass_bc_dist_weighted, 7, grunddaten_grass, FALSE)
@@ -213,14 +175,6 @@ ord <- metaMDS(grass_bc_dist_weighted, k = 2, trymax = 100)
 plot(ord, type = "t")
 
 # Different distance measures ---------------------------------------------
-
-# relative abundances and euclidean distance
-weight_rel_dist <- function(plants_data,w1 = 0.01,w2 = 0.01,w3 = 0.01, w4 = 1, method = "euclidean"){
-  plants_weighted <- plant_weighting(plants_data, w1,w2,w3,w4)
-  plants_rel <- decostand(plants_weighted, method = "total")
-  plants_dist <- vegdist(plants_rel, method = method)
-  return(plants_dist)
-}
 
 plants_forests_euclidean <- weight_rel_dist(plants_forests)
 hdbscan_minClusSize(plants_forests_euclidean)
@@ -269,11 +223,6 @@ plants_LF <- left_join(plants_occ,life_forms, by = "short",multiple = "any")
 
 trees <- filter(plants_LF, Tree == 1)
 trees_short <- filter(trees, species %in% colnames(plants_forest_short))
-
-check_empty_plot <- function(plant_data){
-  plot <- rowSums(plant_data[,-1])
-  plot[order(plot)]
-}
 
 check_empty_plot(plants_forest_short)
 
@@ -342,9 +291,7 @@ plants_forests_rel_ord$stress
 stressplot(plants_forests_rel_ord)
 
 # find outliers in nmds ordination
-outlier_hdbscan <- which(is.finite(plants_forests_rel_ord$points[,1]) & 
-        abs(scale(plants_forests_rel_ord$points[,1])) > 3 |
-        abs(scale(plants_forests_rel_ord$points[,2])) > 3)
+outlier_hdbscan <- hdbscan_outlier_func(plants_forests_rel_ord)
 outlier_hdbscan
 
 plants_forests_rel_ord$points[order(plants_forests_rel_ord$points[,1], decreasing = TRUE),]
