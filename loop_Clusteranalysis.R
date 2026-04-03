@@ -123,17 +123,27 @@ plants_f_trees_w_one <- filter(plants_occ_forests, !total %in% c(0,1)) # maybe a
 plants_f_trees_wone <- plants_forests_red[c("Polygon",plants_f_trees_w_one$species)] # take all 
 # I'm using the plants_f_trees_wone for further reduction of the data
 
-plant_data <- plants_forests_red
-plants_data_red <- plant_data[-1]
-plants_data_red[plants_data_red > 0] <- 1
-plants_data <-  filter(plant_data, !rowSums(plants_data_red) %in% remove_count)
 
 # check number of plant species per plot -------------------------------------------------
 
 check_empty_plot(plants_f_trees_wone)
+plants_trees_wzero <- remove_plots(plants_f_trees_wone, grunddaten_forests_red)
+check_empty_plot(plants_trees_zero[[1]])
 
-test <- remove_plots(plants_f_trees_wone, grunddaten_forests_red)
-check_empty_plot(test[[1]])
+data_list[["plants_trees_wzero"]] <- plants_trees_wzero
+
+plants_trees_wone <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0,1))
+check_empty_plot(plants_trees_wone[[1]])
+data_list[["plants_trees_wone"]] <- plants_trees_wone
+
+plants_trees_wtwo <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0:2))
+check_empty_plot(plants_trees_wtwo[[1]])
+data_list[["plants_trees_wtwo"]] <- plants_trees_wtwo
+
+plants_trees_wthree <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0,1))
+check_empty_plot(plants_trees_wthree[[1]])
+data_list[["plants_trees_wthree"]] <- plants_trees_wthree
+
 
 plant_occurences(plants_forests_red)
 
@@ -165,19 +175,31 @@ for(i in stress_vals){
     diff2 <- diff(diff1)
     
     k_opt <- which.min(diff2) + 1
-    k_opt
+    print(k_opt)
   })
 }
 
+for(i in stress_vals){print(i)}
 
+dimensions <- c(6,5,5,5,6) # for each list one dimension value to use for hdbscan
+plants <- data_list[[3]][[1]]
+plant_mat <- plant_weighting(plants,weighting[1,1],weighting[2,1],weighting[3,1],weighting[4,1])
+plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
+test_nmds <- metaMDS(plant_mat, k = 5, trymax = 20)
 
+hdbscan_minClusSize(hdbscan_forest_reduced$points)
+hdbscan_evaluation(hdbscan_forest_reduced$points, k = 11)
+clusterVScode(hdbscan_forest_reduced$points, 11, data_list[[3]][[2]])
 
+hdbscan_forest_reduced = hdbscan(test_nmds$points, minPts = 11)
+
+hdbscan_complete(test_nmds$points, grunddat = data_list[[3]][[2]])
 
 # evaluation of hdbscan clustering
 valid <- hdbscan_forest_reduced$cluster != 0
 
 clusters_hdb <- hdbscan_forest_reduced$cluster[valid]
-labels   <- grunddaten_forests_red[valid,] # check structure!!!
+labels   <- data_list[[3]][[2]][valid,] # check structure!!!
 
 tab <- table(clusters_hdb, labels$`Biotoptyp-Bund`)
 
@@ -192,6 +214,7 @@ cl_agreement(as.cl_partition(clusters_hdb),
 # Adjusted Rand Index: ~0	random; 0.2–0.4	weak structure; 0.4–0.6	moderate; >0.6	strong; >0.8	excellent
 library(mclust)
 adjustedRandIndex(clusters_hdb, labels$`Biotoptyp-Bund`)
+test_ari <- adjustedRandIndex(clusters_hdb, labels$`Biotoptyp-Bund`)
 
 # cluster-wise purity
 prop.table(tab, margin = 1)

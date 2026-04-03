@@ -33,6 +33,27 @@ plant_occurences <- function(plant_data){
   return(plants)
 }
 
+# calculate number of plants per plant entry
+check_empty_plot <- function(plant_data){
+  plant_red <- plant_data[-1]
+  plant_red[plant_red>0] <- 1
+  plot <- rowSums(plant_red)
+  print(sort(plot))
+  as.vector(plant_data[order(plot),1])
+}
+
+# remove polygons with only a certain number of plants
+remove_plots <- function(plant_data, grunddaten, remove_count = c(0)){
+  plants_data_red <- plant_data[-1]
+  plants_data_red[plants_data_red > 0] <- 1
+  plants_data <-  filter(plant_data, !rowSums(plants_data_red) %in% remove_count)
+  grunddaten <- filter(grunddaten, Polygon %in% plants_data$Polygon)
+  return(list(plants = plants_data, grunddaten = grunddaten))
+}
+
+# hdbscan -----------------------------------------------------------------
+
+
 # run hdbscan with increasing minPts
 hdbscan_minClusSize <- function(distance_data, by = 2){
   for (k in seq(3, 20,by = by)) {
@@ -58,22 +79,21 @@ clusterVScode <- function(plants_dist, pts, grunddat, bund = TRUE){
   }
 }
 
-# calculate number of plants per plant entry
-check_empty_plot <- function(plant_data){
-  plant_red <- plant_data[-1]
-  plant_red[plant_red>0] <- 1
-  plot <- rowSums(plant_red)
-  print(sort(plot))
-  as.vector(plant_data[order(plot),1])
-}
-
-# remove polygons with only a certain number of plants
-remove_plots <- function(plant_data, grunddaten, remove_count = c(0)){
-  plants_data_red <- plant_data[-1]
-  plants_data_red[plants_data_red > 0] <- 1
-  plants_data <-  filter(plant_data, !rowSums(plants_data_red) %in% remove_count)
-  grunddaten <- filter(grunddaten, Polygon %in% plant_data$Polygon)
-  return(list(plants = plants_data, grunddaten = grunddaten))
+hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE){
+  ari_values <- data.frame(k = seq(3, 20,by = by),
+                           ari = rep(0, length(seq(3, 20,by = by))))
+  for (k in seq(3, 20,by = by)) {
+    h <- hdbscan(plants_dist, minPts = k)
+    cat("minPts =", k, "-> clusters:", length(unique(h$cluster)), 
+        " noise:", sum(h$cluster == 0), "\n")
+    table(h$cluster)
+    valid <- h$cluster != 0
+    clusters_hdb <- h$cluster[valid]
+    labels   <- grunddat[valid,] # check structure!!!
+    ari <- adjustedRandIndex(clusters_hdb, labels$`Biotoptyp-Bund`)
+    ari_values[ari_values$k == k,2] <- ari  # change format
+  }
+  return(ari_values)
 }
 
 # check outlier from hdbscan
