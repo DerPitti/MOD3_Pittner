@@ -79,26 +79,62 @@ clusterVScode <- function(plants_dist, pts, grunddat, bund = TRUE){
   }
 }
 
-hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE){
-  ari_values <- data.frame(k = seq(3, 20,by = by),
-                           ari = rep(0, length(seq(3, 20,by = by))))
+hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse = FALSE){
+  values <- data.frame(k = seq(3, 20,by = by),
+                       clusters = rep(0, length(seq(3, 20,by = by))),
+                       noise = rep(0, length(seq(3, 20,by = by))),
+                      ari = rep(0, length(seq(3, 20,by = by))),
+                       purity = rep(0, length(seq(3, 20,by = by))))
+  
   for (k in seq(3, 20,by = by)) {
     h <- hdbscan(plants_dist, minPts = k)
     cat("minPts =", k, "-> clusters:", length(unique(h$cluster)), 
         " noise:", sum(h$cluster == 0), "\n")
-    table(h$cluster)
+    values[values$k == k,2] <- length(unique(h$cluster))
+    values[values$k == k,3] <- sum(h$cluster == 0)
+    #table(h$cluster)
     valid <- h$cluster != 0
     clusters_hdb <- h$cluster[valid]
     labels   <- grunddat[valid,] # check structure!!!
-    ari <- adjustedRandIndex(clusters_hdb, labels$`Biotoptyp-Bund`)
-    ari_values[ari_values$k == k,2] <- ari  # change format
+    if (bund) {
+      labels_bt <- if (coarse) labels$`BT_Bund_group` else labels$`Biotoptyp-Bund`
+    } else {
+      labels_bt <- if (coarse) labels$`BT_Land_group` else labels$`Biotoptyp-Land`
+    }
+    ari <- adjustedRandIndex(clusters_hdb, labels_bt)
+    values[values$k == k,4] <- ari  # change format
+    purity <- cl_agreement(as.cl_partition(clusters_hdb),
+                 as.cl_partition(labels_bt),
+                 method = "purity")
+    values[values$k == k,5] <- purity
   }
-  return(ari_values)
+  return(values)
 }
 
 # check outlier from hdbscan
-hdbscan_outlier_func <- function(hdbscan_data){
-  return(which(is.finite(hdbscan_data$points[,1]) & 
-          abs(scale(hdbscan_data$points[,1])) > 3 |
-          abs(scale(hdbscan_data$points[,2])) > 3))
+ordination_outlier_func <- function(ord_data){
+  return(which(is.finite(ord_data$points[,1]) & 
+          abs(scale(ord_data$points[,1])) > 3 |
+          abs(scale(ord_data$points[,2])) > 3))
+}
+
+# evaluate hdbscan graphically
+hdbscan_plot <- function(data, name){
+  ggplot(data, aes(x = k))+
+    geom_line(aes(y= clusters, colour = "Clusters"))+
+    geom_line(aes(y= noise, colour = "Noise"))+
+    geom_line(aes(y= ari*2000, colour = "ARI"))+
+    geom_line(aes(y= purity*2000, colour = "Purity"))+
+    scale_y_continuous(sec.axis = sec_axis(~ . /2000, name = "ARI / Purity"))+
+    labs(title = name)+
+    scale_colour_manual(
+      name = "Metric",
+      values = c(
+        "Clusters" = "black",
+        "Noise" = "red",
+        "ARI" = "blue",
+        "Purity" = "green"
+      )
+    ) +
+    theme_minimal()
 }

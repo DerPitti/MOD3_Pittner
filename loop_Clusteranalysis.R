@@ -8,6 +8,8 @@ library(vegan)
 library(dbscan)
 library(future)
 library(future.apply)
+library(clue)
+library(mclust)
 
 plan(multisession, workers = parallel::detectCores() - 5)
 
@@ -128,7 +130,7 @@ plants_f_trees_wone <- plants_forests_red[c("Polygon",plants_f_trees_w_one$speci
 
 check_empty_plot(plants_f_trees_wone)
 plants_trees_wzero <- remove_plots(plants_f_trees_wone, grunddaten_forests_red)
-check_empty_plot(plants_trees_zero[[1]])
+check_empty_plot(plants_trees_wzero[[1]])
 
 data_list[["plants_trees_wzero"]] <- plants_trees_wzero
 
@@ -140,19 +142,15 @@ plants_trees_wtwo <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, r
 check_empty_plot(plants_trees_wtwo[[1]])
 data_list[["plants_trees_wtwo"]] <- plants_trees_wtwo
 
-plants_trees_wthree <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0,1))
-check_empty_plot(plants_trees_wthree[[1]])
-data_list[["plants_trees_wthree"]] <- plants_trees_wthree
-
-
-plant_occurences(plants_forests_red)
-
-#### further curation of data into smaller, cleaner data sets necessary!!!
+# plants_trees_wthree <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0,1))
+# check_empty_plot(plants_trees_wthree[[1]])
+# data_list[["plants_trees_wthree"]] <- plants_trees_wthree
 
 
 # NMDS loop ---------------------------------------------------------------
 weighting <- data.frame(imbalanced = c(0.01,0.01,0.01,1),
                         balanced = c(0.01,0.05,0.25,0.75))
+#stress_vals_backup <- stress_vals
 stress_vals <- list(imbalanced = list(), balanced = list())
 
 for(i in 1:2){
@@ -163,10 +161,14 @@ for(i in 1:2){
     # find best dimensionality: via NMDS slowly...
     stress_vals[[i]][[o]] <- future_sapply(2:6, function(k){
       median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = FALSE)$stress))
-  })
+  }, future.seed = TRUE)
   }
 }
 
+#saveRDS(list(data_list,stress_vals), "data_with_stress_vals.RDS")
+
+
+par(mfrow = c(2,4))
 for(i in stress_vals){
   sapply(i, function(x){
     plot(2:6, x, type = "b")
@@ -179,116 +181,128 @@ for(i in stress_vals){
   })
 }
 
-for(i in stress_vals){print(i)}
+stress_vals_df <- data.frame(data = rep(names(data_list),each = 5),
+                             dimensions = rep(seq(2:6),7),
+                             imbalanced = rep(0,length(rep(names(data_list),each = 5))),
+                             balanced = rep(0, length(rep(names(data_list),each = 5))))
 
-dimensions <- c(6,5,5,5,6) # for each list one dimension value to use for hdbscan
-plants <- data_list[[3]][[1]]
-plant_mat <- plant_weighting(plants,weighting[1,1],weighting[2,1],weighting[3,1],weighting[4,1])
-plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
-test_nmds <- metaMDS(plant_mat, k = 5, trymax = 20)
 
-hdbscan_minClusSize(hdbscan_forest_reduced$points)
-hdbscan_evaluation(hdbscan_forest_reduced$points, k = 11)
-clusterVScode(hdbscan_forest_reduced$points, 11, data_list[[3]][[2]])
+for(i in 1:2){
+  results_stress <- c()
+  for (o in 1:7){
+    
+    results_stress <- c(results_stress,stress_vals[[i]][[o]])
+  }
+  stress_vals_df[,i+2] <- results_stress
+  results_stress <- c()
+}
 
-hdbscan_forest_reduced = hdbscan(test_nmds$points, minPts = 11)
+stress_vals_df_plot <- pivot_longer(stress_vals_df, cols = imbalanced:balanced,
+                                    values_to = "stress", names_to = "balance")
 
-hdbscan_complete(test_nmds$points, grunddat = data_list[[3]][[2]])
+ggplot(stress_vals_df_plot)+
+  geom_point(aes(x = dimensions, y = stress, colour = balance))+
+  theme_minimal()+
+  facet_wrap(facets = "data")
 
-# evaluation of hdbscan clustering
-valid <- hdbscan_forest_reduced$cluster != 0
+# balanced is ignored
+dimensions_balanced <- c(6,5,NA, NA,2,4,NA) # for each list one dimension value to use for hdbscan
+dimensions_inbalanced <- c(6,5,5,NA,2,6,6)
+nmds_objects_imbalanced <- list(imbalanced = list())
 
-clusters_hdb <- hdbscan_forest_reduced$cluster[valid]
-labels   <- data_list[[3]][[2]][valid,] # check structure!!!
+dimensions = dimensions_inbalanced
 
-tab <- table(clusters_hdb, labels$`Biotoptyp-Bund`)
 
+plants <- list()
+for (o in 1:length(data_list)) {
+  print(o)
+  if(is.na(dimensions[o]) == FALSE){
+    print(o)
+    plants[[names(data_list)[o]]] <- data_list[[o]][[1]]
+  }
+}
+
+i = 1
+w1 =weighting[1,i]
+w2 = weighting[2,i]
+w3 = weighting[3,i]
+w4 = weighting[4,i]
+# find best dimensionality: via NMDS slowly...
+dimensions_short <- dimensions[!is.na(dimensions)]
+nmds_objects_imbalanced[[i]] <- future_lapply(seq_along(plants), function(o){
+  plant_mat <- plant_weighting(plants[[o]],w1,w2,w3,w4)
+  plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
+  metaMDS(plant_mat, k = dimensions_short[o], trymax = 15)
+}, future.seed = TRUE)
+
+names(nmds_objects_imbalanced$imbalanced) <- names(plants)
+nmds_objects_combined <- list(imbalanced = nmds_objects_imbalanced$imbalanced, balanced = nmds_objects$balanced)
+saveRDS(nmds_objects_combined, file = "nmds_objects_all_260404.Rds")
+
+
+counter = 1
+metric_vals_bund = list()
+for (i in nmds_objects_combined$imbalanced) {
+  metric_vals_bund[[counter]] <- hdbscan_complete(i$points, by = 2,grunddat = data_list[[names(plants)[counter]]][[2]])
+  counter = counter+1
+}
+
+counter = 1
+metric_vals_land = list()
+for (i in nmds_objects_combined$imbalanced) {
+  metric_vals_land[[counter]] <- hdbscan_complete(i$points, by = 2,grunddat = data_list[[names(plants)[counter]]][[2]], bund = FALSE)
+  counter = counter+1
+}
+
+# data set 1 with minPts 13 and bt_land
+
+#check whether ordination posses outliers
+for(i in nmds_objects_combined){
+  outliers <- lapply(i, function(x){
+    ordination_outlier_func(x)
+  })
+  print(outliers)
+}
+
+# forest_complete_wone imbalanced has no outliers:
+hdbscan_complete(nmds_objects_combined$imbalanced[[2]]$points, by = 1,grunddat = data_list[[names(plants)[2]]][[2]])
+evaluation_plt_data <- hdbscan_complete(nmds_objects_combined$imbalanced[[2]]$points, by = 1,
+                                        grunddat = data_list[[names(plants)[2]]][[2]], bund = FALSE, coarse = FALSE)
+# land best
+hdbscan_plot(evaluation_plt_data, name = names(nmds_objects_combined$imbalanced)[[2]])
+
+evaluation_plt_data_coarse <- hdbscan_complete(nmds_objects_combined$imbalanced[[2]]$points, by = 1,
+                                               grunddat = data_list[[names(plants)[2]]][[2]], bund = FALSE, coarse = TRUE)
+hdbscan_plot(evaluation_plt_data_coarse, name = paste0(names(nmds_objects_combined$imbalanced)[[2]], "_coarse"))
+
+
+
+
+test_one <- nmds_objects_combined$imbalanced[[2]]
+ordination_outlier_func(test_one)
+
+test_one_hdbscan <- hdbscan(test_one$points, minPts = 13)
 # Purity: How dominant is the main class within each cluster:
 # > 0.8	very good; 0.6–0.8	reasonable; < 0.6	weak
-#install.packages("clue")
-library(clue)
-cl_agreement(as.cl_partition(clusters_hdb),
-             as.cl_partition(labels$`Biotoptyp-Bund`),
-             method = "purity")
 
-# Adjusted Rand Index: ~0	random; 0.2–0.4	weak structure; 0.4–0.6	moderate; >0.6	strong; >0.8	excellent
-library(mclust)
-adjustedRandIndex(clusters_hdb, labels$`Biotoptyp-Bund`)
-test_ari <- adjustedRandIndex(clusters_hdb, labels$`Biotoptyp-Bund`)
+# Adjusted Rand Index:
+# ~0	random; 0.2–0.4	weak structure; 0.4–0.6	moderate; >0.6	strong; >0.8	excellent
+
 
 # cluster-wise purity
 prop.table(tab, margin = 1)
 
 
 
-# ordination to plot hdbscan in 2-dimensional space
-plants_forests_bray_ord <- metaMDS(plants_forests_rel_short, k = 2, trymax = 10) # 2-dimensional NMDS
-plot(plants_forests_rel_ord, type = "t") # plot NMDS to see if pattern exists -> no..., but outliers
+# 
+# check_forest_outliers <- filter(plants_forests_red, Polygon %in% plants_forests_red$Polygon[order(plants_forests_rel_ord$points[,1], decreasing = TRUE)[1:3]])
+# check_forest_outliers <- plants_forests_red[outlier_hdbscan,]
+# filter(grunddaten_forests_red, Polygon %in% plants_forests_red$Polygon[order(plants_forests_rel_ord$points[,1], decreasing = TRUE)[1:3]])
 
-plants_forests_rel_ord$stress
-stressplot(plants_forests_rel_ord)
-
-# find outliers in nmds ordination
-outlier_hdbscan <- which(is.finite(plants_forests_rel_ord$points[,1]) & 
-        abs(scale(plants_forests_rel_ord$points[,1])) > 3 |
-        abs(scale(plants_forests_rel_ord$points[,2])) > 3)
-outlier_hdbscan
-
-plants_forests_rel_ord$points[order(plants_forests_rel_ord$points[,1], decreasing = TRUE),]
-
-
-check_forest_outliers <- filter(plants_forests_red, Polygon %in% plants_forests_red$Polygon[order(plants_forests_rel_ord$points[,1], decreasing = TRUE)[1:3]])
-check_forest_outliers <- plants_forests_red[outlier_hdbscan,]
-filter(grunddaten_forests_red, Polygon %in% plants_forests_red$Polygon[order(plants_forests_rel_ord$points[,1], decreasing = TRUE)[1:3]])
-
-
-# find best dimensionality: via NMDS slowly...
-stress_vals <- future_sapply(2:6, function(k)
-  metaMDS(plants_forests_rel_short, k = k, trymax = 3, trace = FALSE)$stress)
-
-plot(2:6, stress_vals, type = "b")
-
-# approximate "elbow"
-diff1 <- diff(stress_vals)
-diff2 <- diff(diff1)
-
-k_opt <- which.min(diff2) + 1
-k_opt
-
-plants_forests_rel_ord_5 <- metaMDS(plants_forests_rel_short, k = 5, trymax = 10) # 2-dimensional NMDS
-plot(plants_forests_rel_ord_5, type = "t") # plot NMDS to see if pattern exists -> no..., but outliers
-
-plants_forests_rel_ord_5$stress
-stressplot(plants_forests_rel_ord_5)
-
-# use NMDS data for hdbscan
-hdbscan_minClusSize(plants_forests_rel_ord_5$points)
-hdbscan_evaluation(plants_forests_rel_ord_5$points, k = 11)
-clusterVScode(plants_forests_rel_ord_5$points, 11, grunddaten_forests_red, FALSE)
-hdbscan_forest_red_5 <- hdbscan(plants_forests_rel_ord_5$points, 11)
-
-# evaluation of hdbscan clustering
-valid <- hdbscan_forest_red_5$cluster != 0
-
-clusters_hdb_5 <- hdbscan_forest_red_5$cluster[valid]
-labels   <- grunddaten_forests_red[valid,] # check structure!!!
-
-tab <- table(clusters_hdb_5, labels$`Biotoptyp-Bund`)
-
-# Purity: How dominant is the main class within each cluster:
-# > 0.8	very good; 0.6–0.8	reasonable; < 0.6	weak
-#install.packages("clue")
-cl_agreement(as.cl_partition(clusters_hdb_5),
-             as.cl_partition(labels$`Biotoptyp-Bund`),
-             method = "purity")
-
-# Adjusted Rand Index: ~0	random; 0.2–0.4	weak structure; 0.4–0.6	moderate; >0.6	strong; >0.8	excellent
-#library(mclust)
-adjustedRandIndex(clusters_hdb_5, labels$`Biotoptyp-Bund`)
 
 # display just first two NMDS axes
-plot_data <- as.data.frame(plants_forests_rel_ord_5$points[, 1:2])
-plot_data$cluster <- factor(hdbscan_forest_red_5$cluster)
+plot_data <- as.data.frame(test_one$points[, 1:2])
+plot_data$cluster <- factor(test_one_hdbscan$cluster)
 
 plot(plot_data)
 
@@ -316,14 +330,33 @@ ggplot(plot_data, aes(PC1, PC2, color = cluster)) +
 
 # 3D-plotting -------------------------------------------------------------
 
-library(plotly)
-
 # Use first 3 NMDS dimensions
-df <- as.data.frame(plants_forests_rel_ord_5$points[, 1:3])
+df <- as.data.frame(test_one$points[, 1:3])
 colnames(df) <- c("NMDS1", "NMDS2", "NMDS3")
 
-df$cluster <- factor(hdbscan_forest_red_5$cluster)
-df$biotope <- grunddaten_forests_red$`Biotoptyp-Bund`
+df$cluster <- factor(test_one_hdbscan$cluster)
+#df$biotope <- data_list[[names(plants)[2]]][[2]]$`Biotoptyp-Bund`
+df$biotope <- data_list[[names(plants)[2]]][[2]]$`BT_Land_group`
+
+library(plotly)
+
+# looking to understand the mismatch in cluster and biotope codes
+tab <- table(test_one_hdbscan$cluster, data_list[[names(plants)[2]]][[2]]$`BT_Land_group`)
+dominant <- apply(tab, 1, function(x) names(which.max(x)))
+
+df$cluster_main <- dominant[as.character(df$cluster)]
+df$mismatch <- df$biotope != df$cluster_main
+sum(df$mismatch) # not fitting into the cluster
+sum(df$mismatch==FALSE)
+
+plot_ly(df,
+        x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
+        color = ~mismatch,
+        colors = c("FALSE" = "black", "TRUE" = "red"),
+        type = "scatter3d",
+        mode = "markers")
+
+
 
 plot_ly(df,
         x = ~NMDS1,
@@ -349,7 +382,11 @@ plot_ly(df,
         color = ~biotope,
         colors = getPalette(colourCount),
         type = "scatter3d",
-        mode = "markers")
+        mode = "markers",
+        marker = list(size = 3)) %>%
+  layout(scene = list(xaxis = list(title = "NMDS1"),
+                      yaxis = list(title = "NMDS2"),
+                      zaxis = list(title = "NMDS3")))
 
 # with hovering
 df$label <- paste("Cluster:", df$cluster,
@@ -362,21 +399,38 @@ plot_ly(df,
         text = ~label,
         hoverinfo = "text",
         type = "scatter3d",
-        mode = "markers")
+        mode = "markers",
+        marker = list(size = 3)) %>%
+  layout(scene = list(xaxis = list(title = "NMDS1"),
+                      yaxis = list(title = "NMDS2"),
+                      zaxis = list(title = "NMDS3")))
 
-# looking to understand the mismatch in cluster and biotope codes
-tab <- table(hdbscan_forest_red_5$cluster, grunddaten_forests_red$`Biotoptyp-Bund`)
-dominant <- apply(tab, 1, function(x) names(which.max(x)))
 
-df$cluster_main <- dominant[as.character(df$cluster)]
-df$mismatch <- df$biotope != df$cluster_main
+# remove AG-biotope types -------------------------------------------------
 
-plot_ly(df,
-        x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
-        color = ~mismatch,
-        colors = c("FALSE" = "black", "TRUE" = "red"),
-        type = "scatter3d",
-        mode = "markers")
+forest_complete_wone_wAG <- forest_complete_wone
+wone_wAG <- dplyr::filter(forest_complete_wone[[2]], !substr(`Biotoptyp-Land`,1,2) == "AG")
+plants_wone_wAG <- dplyr::filter(forest_complete_wone[[1]], Polygon %in% wone_wAG$Polygon)
+wone_wAG_list <- list(plants = plants_wone_wAG, grunddaten = wone_wAG)
+
+stress_vals_wone_wAG <- list(imbalanced = list(), balanced = list())
+
+# future::plan(sequential)
+# gc() # optional, frees memory
+
+for(i in 1:2){
+  plants <- plants_wone_wAG
+    plant_mat <- plant_weighting(plants,weighting[1,i],weighting[2,i],weighting[3,i],weighting[4,i])
+    plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
+    # find best dimensionality: via NMDS slowly...
+    stress_vals_wone_wAG[[i]][[1]] <- future_sapply(2:6, function(k){
+      median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = 0)$stress))
+    }, future.seed = TRUE)
+}
+
+
+# further analysis --------------------------------------------------------
+
 
 # reveal indicator species
 library(indicspecies)
