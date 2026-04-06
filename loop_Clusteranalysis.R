@@ -10,6 +10,8 @@ library(future)
 library(future.apply)
 library(clue)
 library(mclust)
+library(plotly)
+library(geometry)
 
 plan(multisession, workers = parallel::detectCores() - 5)
 
@@ -227,7 +229,7 @@ w1 =weighting[1,i]
 w2 = weighting[2,i]
 w3 = weighting[3,i]
 w4 = weighting[4,i]
-# find best dimensionality: via NMDS slowly...
+
 dimensions_short <- dimensions[!is.na(dimensions)]
 nmds_objects_imbalanced[[i]] <- future_lapply(seq_along(plants), function(o){
   plant_mat <- plant_weighting(plants[[o]],w1,w2,w3,w4)
@@ -237,7 +239,7 @@ nmds_objects_imbalanced[[i]] <- future_lapply(seq_along(plants), function(o){
 
 names(nmds_objects_imbalanced$imbalanced) <- names(plants)
 nmds_objects_combined <- list(imbalanced = nmds_objects_imbalanced$imbalanced, balanced = nmds_objects$balanced)
-saveRDS(nmds_objects_combined, file = "nmds_objects_all_260404.Rds")
+# saveRDS(nmds_objects_combined, file = "nmds_objects_all_260404.Rds")
 
 
 counter = 1
@@ -330,22 +332,11 @@ ggplot(plot_data, aes(PC1, PC2, color = cluster)) +
 
 # 3D-plotting -------------------------------------------------------------
 
-# Use first 3 NMDS dimensions
-df <- as.data.frame(test_one$points[, 1:3])
-colnames(df) <- c("NMDS1", "NMDS2", "NMDS3")
+df <- hdbscan_mismatch_evaluation(plants_nmds = test_one,
+                                  plants_hdbscan = test_one_hdbscan,
+                                  grunddat = data_list[[names(plants)[2]]][[2]],
+                                  coarse = TRUE)
 
-df$cluster <- factor(test_one_hdbscan$cluster)
-#df$biotope <- data_list[[names(plants)[2]]][[2]]$`Biotoptyp-Bund`
-df$biotope <- data_list[[names(plants)[2]]][[2]]$`BT_Land_group`
-
-library(plotly)
-
-# looking to understand the mismatch in cluster and biotope codes
-tab <- table(test_one_hdbscan$cluster, data_list[[names(plants)[2]]][[2]]$`BT_Land_group`)
-dominant <- apply(tab, 1, function(x) names(which.max(x)))
-
-df$cluster_main <- dominant[as.character(df$cluster)]
-df$mismatch <- df$biotope != df$cluster_main
 sum(df$mismatch) # not fitting into the cluster
 sum(df$mismatch==FALSE)
 
@@ -388,6 +379,7 @@ plot_ly(df,
                       yaxis = list(title = "NMDS2"),
                       zaxis = list(title = "NMDS3")))
 
+
 # with hovering
 df$label <- paste("Cluster:", df$cluster,
                   "<br>Biotope:", df$biotope)
@@ -405,6 +397,7 @@ plot_ly(df,
                       yaxis = list(title = "NMDS2"),
                       zaxis = list(title = "NMDS3")))
 
+hover_3D(df=df)
 
 # remove AG-biotope types -------------------------------------------------
 
@@ -428,6 +421,97 @@ for(i in 1:2){
     }, future.seed = TRUE)
 }
 
+stress_vals_df_wAG <- data.frame(dimensions = seq(2,6),
+                             imbalanced = rep(0, 5),
+                             balanced = rep(0, 5))
+
+for(i in 1:2){
+  results_stress_wAG <- c()
+  results_stress_wAG <- c(results_stress_wAG,stress_vals_wone_wAG[[i]][[1]])
+  stress_vals_df_wAG[,i+1] <- results_stress_wAG
+  results_stress_wAG <- c()
+}
+
+stress_vals_df_wAG_plot <- pivot_longer(stress_vals_df_wAG, cols = imbalanced:balanced,
+                                    values_to = "stress", names_to = "balance")
+
+ggplot(stress_vals_df_wAG_plot)+
+  geom_point(aes(x = dimensions, y = stress, colour = balance))+
+  theme_minimal()
+
+# best dimension
+
+
+nmds_object_imbalanced_wAG <- list()
+plants_list_wAG <- list(plants_wone_wAG,plants_wone_wAG)
+nmds_object_imbalanced_wAG[[1]] <- future_lapply(seq_along(plants_list_wAG), function(o){
+  w1 =weighting[1,o]
+  w2 = weighting[2,o]
+  w3 = weighting[3,o]
+  w4 = weighting[4,o]
+  plant_mat <- plant_weighting(plants_list_wAG[[o]],w1,w2,w3,w4)
+  plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
+  metaMDS(plant_mat, k = 6, trymax = 15)
+}, future.seed = TRUE)
+
+names(nmds_object_imbalanced_wAG[[1]]) <- c("imbalanced", "balanced")
+#saveRDS(nmds_object_imbalanced_wAG, "nmds_objects_forests_wone_wAG_dim6.RDS")
+
+####
+counter = 1
+metric_vals_wAG = list(imbalanced = list(), balanced = list())
+for (i in nmds_object_imbalanced_wAG[[1]]) {
+  metric_vals_wAG[[names(nmds_object_imbalanced_wAG[[1]])[counter]]][[1]] <- hdbscan_complete(i$points, by = 2,grunddat = wone_wAG)
+  metric_vals_wAG[[names(nmds_object_imbalanced_wAG[[1]])[counter]]][[2]] <- hdbscan_complete(i$points, by = 2,grunddat = wone_wAG, bund = FALSE)
+  counter = counter+1
+}
+
+### imbalanced with minPts 13 and bt_land
+#load("250405_1257_Rdata")
+
+#check whether ordination posses outliers
+for(i in nmds_object_imbalanced_wAG){
+  outliers <- lapply(i, function(x){
+    ordination_outlier_func(x)
+  })
+  print(outliers)
+}
+
+# forest_complete_wone imbalanced has no outliers:
+evaluation_plt_data <- hdbscan_complete(nmds_object_imbalanced_wAG[[1]][[1]]$points, by = 1,grunddat = wone_wAG, bund = FALSE)
+
+# land best
+hdbscan_plot(evaluation_plt_data, name = names(nmds_objects_combined$imbalanced)[[2]])
+
+evaluation_plt_data_coarse <- hdbscan_complete(nmds_object_imbalanced_wAG[[1]][[1]]$points, by = 1,grunddat = wone_wAG, bund = FALSE,coarse = TRUE)
+
+hdbscan_plot(evaluation_plt_data_coarse, name = paste0(names(nmds_objects_combined$imbalanced)[[2]], "_coarse"))
+
+### imbalanced with minPts 10 and bt_land and coarse = 10
+
+hdbscan_wAG <- hdbscan(nmds_object_imbalanced_wAG[[1]][[1]]$points, minPts = 10)
+
+df_wAG <- hdbscan_mismatch_evaluation(plants_nmds = nmds_object_imbalanced_wAG[[1]][[1]],
+                                  plants_hdbscan = hdbscan_wAG,
+                                  grunddat = wone_wAG,
+                                  coarse = TRUE)
+
+sum(df_wAG$mismatch) # not fitting into the cluster
+sum(df_wAG$mismatch==FALSE)
+
+hover_3D(df_wAG)
+hull_3D(df_wAG, op_hull = 0.6, op_points = 0.3)
+
+table(hdbscan_wAG$cluster, wone_wAG$`Biotoptyp-Land`)
+table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)
+
+prop.table(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`), margin=1)
+prop.table(t(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)), margin=1)
+
+ggplot(as.data.frame(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)),
+       aes(Var2, Freq, colour = Var1, fill = Var1)) +
+  geom_bar(stat = "identity")+
+  theme_minimal()
 
 # further analysis --------------------------------------------------------
 

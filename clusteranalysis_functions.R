@@ -138,3 +138,97 @@ hdbscan_plot <- function(data, name){
     ) +
     theme_minimal()
 }
+
+# evaluate number of wrongly predicted data sets
+hdbscan_mismatch_evaluation <- function(plants_nmds,plants_hdbscan, grunddat,
+                                        bund = FALSE,
+                                        coarse = FALSE){
+  # Use first 3 NMDS dimensions
+  df <- as.data.frame(plants_nmds$points[, 1:3])
+  colnames(df) <- c("NMDS1", "NMDS2", "NMDS3")
+  df$cluster <- factor(plants_hdbscan$cluster)
+  
+  if (bund) {
+    df$biotope <- if (coarse) grunddat$`BT_Bund_group` else grunddat$`Biotoptyp-Bund`
+  } else {
+    df$biotope <- if (coarse) grunddat$`BT_Land_group` else grunddat$`Biotoptyp-Land`
+  }
+  
+  # looking to understand the mismatch in cluster and biotope codes
+  tab <- table(plants_hdbscan$cluster, df$biotope)
+  dominant <- apply(tab, 1, function(x) names(which.max(x)))
+  
+  df$cluster_main <- dominant[as.character(df$cluster)]
+  df$mismatch <- df$biotope != df$cluster_main
+  return(df)
+}
+
+
+hover_3D <- function(df){
+  colourCount = length(unique(df$biotope))
+  getPalette = colorRampPalette(colors = c("red","green", "blue"))
+  
+  # with hovering
+  df$label <- paste("Cluster:", df$cluster,
+                    "<br>Biotope:", df$biotope)
+  
+  plot_ly(df,
+          x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
+          color = ~biotope,
+          colors = getPalette(colourCount),
+          text = ~label,
+          hoverinfo = "text",
+          type = "scatter3d",
+          mode = "markers",
+          marker = list(size = 3)) %>%
+    layout(scene = list(xaxis = list(title = "NMDS1"),
+                        yaxis = list(title = "NMDS2"),
+                        zaxis = list(title = "NMDS3")))
+}
+
+# hülle around cluster in 3d
+hull_3D <- function(df, op_hull = 0.2, op_points = 0.7){
+  p <- plot_ly()
+  
+  for (grp in setdiff(unique(df$cluster), 0)) {
+    sub <- df[df$cluster == grp, ]
+    
+    if (nrow(sub) >= 4) {
+      hull <- convhulln(as.matrix(sub[, c("NMDS1","NMDS2","NMDS3")]), 
+                        output.options = TRUE)
+      
+      p <- p %>%
+        add_trace(
+          type = "mesh3d",
+          x = sub$NMDS1,
+          y = sub$NMDS2,
+          z = sub$NMDS3,
+          i = hull$hull[,1] - 1,
+          j = hull$hull[,2] - 1,
+          k = hull$hull[,3] - 1,
+          opacity = op_hull,
+          colors = getPalette(colourCount),
+          name = paste("Cluster", grp),
+          showscale = FALSE
+        )
+    }
+  }
+  
+  
+  # add points on top
+  p <- p %>%
+    add_trace(
+      data = df,
+      x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
+      type = "scatter3d",
+      mode = "markers",
+      color = ~biotope,
+      colors = getPalette(colourCount),
+      opacity = op_points,
+      marker = list(size = 3)
+    )
+  
+  p
+  
+}
+
