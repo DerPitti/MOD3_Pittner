@@ -232,3 +232,36 @@ hull_3D <- function(df, op_hull = 0.2, op_points = 0.7){
   
 }
 
+### gmm functions
+evaluate_gmm <- function(gmm_list){
+  mclust_tabs_total <- list()
+  ari_values <- list()
+  bic_values <- list()
+  uncertainty_values <- list()
+  for(i in 1:length(gmm_list)){
+    bio_data <- data_list[[i]][[2]]$`BT_Land_group`
+    tab <- table(Cluster = gmm_list[[i]][[1]]$classification,
+                 Biotope = bio_data)
+    df_tab <- as.data.frame(tab)
+    df_tab$run <- 1
+    ari <- adjustedRandIndex(gmm_list[[i]][[1]]$classification, bio_data)
+    bic <- gmm_list[[i]][[1]]$bic
+    uncertainty <- mean(gmm_list[[i]][[1]]$uncertainty)
+    for(o in 2:4){
+      tab <- table(Cluster = gmm_list[[i]][[o]]$classification,
+                   Biotope = bio_data)
+      df_tab_temp <- as.data.frame(tab)
+      df_tab_temp$run <- o
+      df_tab <- rbind(df_tab,df_tab_temp)
+      ari <-  c(ari,adjustedRandIndex(gmm_list[[i]][[o]]$classification, bio_data))
+      bic <- c(bic, gmm_list[[i]][[o]]$bic)
+      uncertainty <- c(uncertainty, mean(gmm_list[[i]][[o]]$uncertainty))
+    }
+    mclust_tabs_total[[i]] <- df_tab
+    ari_values[[i]] <- ari
+    bic_values[[i]] <- bic
+    uncertainty_values[[i]] <- uncertainty
+  }
+  return(list(tab_plot = mclust_tabs_total, ari_values =ari_values,
+              bic = bic_values, uncertainty = uncertainty_values))
+}

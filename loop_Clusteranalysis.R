@@ -27,9 +27,9 @@ grunddaten$BT_Land_group <- substr(grunddaten$`Biotoptyp-Land`,1,2)
 
 # find plots with completely identical attributes
 duplicates <- grunddaten %>%
-                 group_by(grunddaten[,-1])%>%
-                 filter(n()>1) %>%
-                 ungroup()
+  group_by(grunddaten[,-1])%>%
+  filter(n()>1) %>%
+  ungroup()
 
 
 # Removal of data sets with non-meaningful plant composition --------------
@@ -163,7 +163,7 @@ for(i in 1:2){
     # find best dimensionality: via NMDS slowly...
     stress_vals[[i]][[o]] <- future_sapply(2:6, function(k){
       median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = FALSE)$stress))
-  }, future.seed = TRUE)
+    }, future.seed = TRUE)
   }
 }
 
@@ -413,17 +413,17 @@ stress_vals_wone_wAG <- list(imbalanced = list(), balanced = list())
 
 for(i in 1:2){
   plants <- plants_wone_wAG
-    plant_mat <- plant_weighting(plants,weighting[1,i],weighting[2,i],weighting[3,i],weighting[4,i])
-    plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
-    # find best dimensionality: via NMDS slowly...
-    stress_vals_wone_wAG[[i]][[1]] <- future_sapply(2:6, function(k){
-      median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = 0)$stress))
-    }, future.seed = TRUE)
+  plant_mat <- plant_weighting(plants,weighting[1,i],weighting[2,i],weighting[3,i],weighting[4,i])
+  plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
+  # find best dimensionality: via NMDS slowly...
+  stress_vals_wone_wAG[[i]][[1]] <- future_sapply(2:6, function(k){
+    median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = 0)$stress))
+  }, future.seed = TRUE)
 }
 
 stress_vals_df_wAG <- data.frame(dimensions = seq(2,6),
-                             imbalanced = rep(0, 5),
-                             balanced = rep(0, 5))
+                                 imbalanced = rep(0, 5),
+                                 balanced = rep(0, 5))
 
 for(i in 1:2){
   results_stress_wAG <- c()
@@ -433,7 +433,7 @@ for(i in 1:2){
 }
 
 stress_vals_df_wAG_plot <- pivot_longer(stress_vals_df_wAG, cols = imbalanced:balanced,
-                                    values_to = "stress", names_to = "balance")
+                                        values_to = "stress", names_to = "balance")
 
 ggplot(stress_vals_df_wAG_plot)+
   geom_point(aes(x = dimensions, y = stress, colour = balance))+
@@ -492,9 +492,9 @@ hdbscan_plot(evaluation_plt_data_coarse, name = paste0(names(nmds_objects_combin
 hdbscan_wAG <- hdbscan(nmds_object_imbalanced_wAG[[1]][[1]]$points, minPts = 10)
 
 df_wAG <- hdbscan_mismatch_evaluation(plants_nmds = nmds_object_imbalanced_wAG[[1]][[1]],
-                                  plants_hdbscan = hdbscan_wAG,
-                                  grunddat = wone_wAG,
-                                  coarse = TRUE)
+                                      plants_hdbscan = hdbscan_wAG,
+                                      grunddat = wone_wAG,
+                                      coarse = TRUE)
 
 sum(df_wAG$mismatch) # not fitting into the cluster
 sum(df_wAG$mismatch==FALSE)
@@ -513,6 +513,106 @@ ggplot(as.data.frame(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)),
   geom_bar(stat = "identity")+
   theme_minimal()
 
+
+# GMM ---------------------------------------------------------------------
+
+#load("260406_1001.Rdata")
+
+grid <- expand.grid(
+  i = 1:2,
+  o = seq_along(data_list)
+)
+
+
+results <- future_lapply(seq_len(nrow(grid)), function(idx) {
+  i <- grid$i[idx]
+  o <- grid$o[idx]
+  
+  name <- names(data_list)[o]
+  plants <- data_list[[o]][[1]]
+  
+  plant_mat <- plant_weighting(
+    plants,
+    weighting[1,i], weighting[2,i],
+    weighting[3,i], weighting[4,i]
+  )
+  
+  plant_total <- decostand(plant_mat, method = "total")
+  plant_hell  <- decostand(plant_mat, method = "hellinger")
+  
+  # GMM
+  model_total <- Mclust(plant_total)
+  model_hell  <- Mclust(plant_hell)
+  
+  # PCA + GMM
+  pca_total <- prcomp(plant_total)
+  model_pca_total <- Mclust(pca_total$x[, 1:10])
+  
+  pca_hell <- prcomp(plant_hell)
+  model_pca_hell <- Mclust(pca_hell$x[, 1:10])
+  
+  list(
+    name = name,
+    i = i,
+    models_total = list(
+      raw = model_total,
+      pca = model_pca_total
+    ),
+    models_hell = list(
+      raw = model_hell,
+      pca = model_pca_hell
+    )
+  )
+}, future.seed = TRUE)
+
+#results <- readRDS("GMM_results_all_260406.Rds")
+
+gmm_models_total <- list()
+gmm_models_hellinger <- list()
+
+for (res in results) {
+  name <- res$name
+  i <- res$i
+  
+  if (is.null(gmm_models_total[[name]])) {
+    gmm_models_total[[name]] <- vector("list", 4)
+    gmm_models_hellinger[[name]] <- vector("list", 4)
+  }
+  
+  gmm_models_total[[name]][[i]]     <- res$models_total$raw
+  gmm_models_total[[name]][[i+2]]   <- res$models_total$pca
+  
+  gmm_models_hellinger[[name]][[i]]   <- res$models_hell$raw
+  gmm_models_hellinger[[name]][[i+2]] <- res$models_hell$pca
+}
+
+# visualize/evaluate results
+
+gmm_total_eval <- evaluate_gmm(gmm_models_total)
+
+for(i in gmm_total_eval$tab_plot){
+  print(ggplot(data = i, aes(x = Biotope, y = Cluster, fill = Freq)) +
+          geom_tile() +
+          scale_fill_gradient(low = "white", high = "blue") +
+          theme_minimal() +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+          facet_wrap(facet = "run")
+        )
+}
+for(i in gmm_total_eval$ari_values){
+  print(i)
+}
+
+gmm_hell_eval <- evaluate_gmm(gmm_models_hellinger)
+for(i in gmm_hell_eval$ari_values){
+  print(i)
+}
+for(i in gmm_hell_eval$bic){
+  print(i)
+}
+for(i in gmm_hell_eval$uncertainty){
+  print(i)
+}
 # further analysis --------------------------------------------------------
 
 
@@ -645,7 +745,7 @@ join_cluster_code <- inner_join(test_cluster_bt, grunddaten_sub[,c(1,2,4)], by =
 ggplot(coords, aes(NMDS1, NMDS2, color = cluster)) +
   geom_point(size = 2, alpha = 0.8) +
   #scale_color_manual(
-   # values = c("0" = "grey70", scales::hue_pal()(length(unique(coords$cluster)) - 1))
+  # values = c("0" = "grey70", scales::hue_pal()(length(unique(coords$cluster)) - 1))
   #) +
   labs(
     title = "HDBSCAN Clustering (PCoA of Bray–Curtis)",
