@@ -12,6 +12,8 @@ library(clue)
 library(mclust)
 library(plotly)
 library(geometry)
+library(cluster)
+library(factoextra)
 
 plan(multisession, workers = parallel::detectCores() - 5)
 
@@ -277,8 +279,13 @@ evaluation_plt_data_coarse <- hdbscan_complete(nmds_objects_combined$imbalanced[
                                                grunddat = data_list[[names(plants)[2]]][[2]], bund = FALSE, coarse = TRUE)
 hdbscan_plot(evaluation_plt_data_coarse, name = paste0(names(nmds_objects_combined$imbalanced)[[2]], "_coarse"))
 
+#### plants_trees_wone imbalanced has no outliers:
+evaluation_trees_wone_coarse <- hdbscan_complete(nmds_objects_combined$imbalanced[[5]]$points, by = 1,
+                                               grunddat = data_list[[names(plants)[5]]][[2]], bund = FALSE, coarse = TRUE)
+hdbscan_plot(evaluation_trees_wone_coarse, name = paste0(names(nmds_objects_combined$imbalanced)[[5]], "_coarse"))
 
 
+####
 
 test_one <- nmds_objects_combined$imbalanced[[2]]
 ordination_outlier_func(test_one)
@@ -478,41 +485,80 @@ for(i in nmds_object_imbalanced_wAG){
 }
 
 # forest_complete_wone imbalanced has no outliers:
-evaluation_plt_data <- hdbscan_complete(nmds_object_imbalanced_wAG[[1]][[1]]$points, by = 1,grunddat = wone_wAG, bund = FALSE)
+evaluation_plt_data_wAG <- hdbscan_complete(nmds_object_imbalanced_wAG[[1]][[1]]$points, by = 1,grunddat = wone_wAG, bund = FALSE)
 
 # land best
-hdbscan_plot(evaluation_plt_data, name = names(nmds_objects_combined$imbalanced)[[2]])
+hdbscan_plot(evaluation_plt_data_wAG, name = "imbalanced_bund")
 
-evaluation_plt_data_coarse <- hdbscan_complete(nmds_object_imbalanced_wAG[[1]][[1]]$points, by = 1,grunddat = wone_wAG, bund = FALSE,coarse = TRUE)
-
-hdbscan_plot(evaluation_plt_data_coarse, name = paste0(names(nmds_objects_combined$imbalanced)[[2]], "_coarse"))
-
+evaluation_imbalanced_coarse_wAG <- hdbscan_complete(nmds_object_imbalanced_wAG[[1]][[1]]$points, by = 1,grunddat = wone_wAG, bund = FALSE,coarse = TRUE)
+hdbscan_plot(evaluation_imbalanced_coarse_wAG, name = "imbalanced_coarse_wAG")
 ### imbalanced with minPts 10 and bt_land and coarse = 10
 
-hdbscan_wAG <- hdbscan(nmds_object_imbalanced_wAG[[1]][[1]]$points, minPts = 10)
+evaluation_balanced_coarse_wAG <- hdbscan_complete(nmds_object_imbalanced_wAG[[1]][[2]]$points, by = 1,grunddat = wone_wAG, bund = FALSE,coarse = TRUE)
+hdbscan_plot(evaluation_balanced_coarse_wAG, name = "balanced_coarse_wAG")
+### balanced with minPts 15 and bt_land and coarse = 10
 
+hdbscan_wAG_imbalanced <- hdbscan(nmds_object_imbalanced_wAG[[1]][[1]]$points, minPts = 10)
+hdbscan_wAG_balanced <- hdbscan(nmds_object_imbalanced_wAG[[1]][[2]]$points, minPts = 15)
+
+# imbalanced evaluation
 df_wAG <- hdbscan_mismatch_evaluation(plants_nmds = nmds_object_imbalanced_wAG[[1]][[1]],
-                                      plants_hdbscan = hdbscan_wAG,
+                                      plants_hdbscan = hdbscan_wAG_imbalanced,
                                       grunddat = wone_wAG,
                                       coarse = TRUE)
 
 sum(df_wAG$mismatch) # not fitting into the cluster
+sum(df_wAG$mismatch & !is.na(df_wAG$NC))
+sum(df_wAG$mismatch & !is.na(df_wAG$NC))/sum(df_wAG$mismatch)
+
 sum(df_wAG$mismatch==FALSE)
+sum(df_wAG$mismatch==FALSE & !is.na(df_wAG$NC))
+sum(df_wAG$mismatch==FALSE & !is.na(df_wAG$NC))/sum(df_wAG$mismatch==FALSE)
+
+sum(df_wAG$cluster==0 & !is.na(df_wAG$NC))
+sum(df_wAG$cluster==0 & df_wAG$mismatch)
+
 
 hover_3D(df_wAG)
 hull_3D(df_wAG, op_hull = 0.6, op_points = 0.3)
 
-table(hdbscan_wAG$cluster, wone_wAG$`Biotoptyp-Land`)
-table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)
+table(hdbscan_wAG_imbalanced$cluster, wone_wAG$`Biotoptyp-Land`)
+table(hdbscan_wAG_imbalanced$cluster, wone_wAG$`BT_Land_group`)
 
 prop.table(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`), margin=1)
 prop.table(t(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)), margin=1)
+
+# balanced
+table(hdbscan_wAG_balanced$cluster, wone_wAG$`BT_Land_group`)
+df_wAG_balanced <- hdbscan_mismatch_evaluation(plants_nmds = nmds_object_imbalanced_wAG[[1]][[2]],
+                                      plants_hdbscan = hdbscan_wAG_balanced,
+                                      grunddat = wone_wAG,
+                                      coarse = TRUE)
+
+sum(df_wAG_balanced$mismatch) # not fitting into the cluster
+sum(df_wAG_balanced$mismatch==FALSE)
+
+# visualization
 
 ggplot(as.data.frame(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)),
        aes(Var2, Freq, colour = Var1, fill = Var1)) +
   geom_bar(stat = "identity")+
   theme_minimal()
 
+# check all plant data that is classified as noise
+wAG_noise_imbalanced <- plants_wone_wAG[hdbscan_wAG_imbalanced$cluster==0,]
+wAG_noise_imbalanced_join <- inner_join(wone_wAG[,1:5],wAG_noise_imbalanced, by = "Polygon")
+
+wAG_noise_balanced <- plants_wone_wAG[hdbscan_wAG_balanced$cluster==0,]
+wAG_noise_balanced_join <- inner_join(wone_wAG[,1:5],wAG_noise_balanced, by = "Polygon")
+
+# overlapp of noise between both
+sum(wAG_noise_imbalanced$Polygon %in% wAG_noise_balanced$Polygon)
+
+wAG_noise_imbalanced_join[wAG_noise_imbalanced_join==0] <- NA
+wAG_noise_imbalanced_join_long <- pivot_longer(wAG_noise_imbalanced_join,
+                                               cols = colnames(wAG_noise_imbalanced_join)[6]:colnames(wAG_noise_imbalanced_join)[length(wAG_noise_imbalanced_join)],
+                                               names_to = "plant", values_to = "Number", values_drop_na = TRUE)
 
 # GMM ---------------------------------------------------------------------
 
@@ -588,6 +634,10 @@ for (res in results) {
 
 # visualize/evaluate results
 
+#https://mclust-org.github.io/mclust-book/chapters/03_cluster.html
+
+plot(gmm_models_total[[1]][[1]], what = "classification", dimens = c(1,2,3,4), fillEllipses = TRUE)
+
 gmm_total_eval <- evaluate_gmm(gmm_models_total)
 
 for(i in gmm_total_eval$tab_plot){
@@ -613,6 +663,136 @@ for(i in gmm_hell_eval$bic){
 for(i in gmm_hell_eval$uncertainty){
   print(i)
 }
+
+
+# PAM ---------------------------------------------------------------------
+# I want to try PAM instead of agglomerative cluster algorithms because in the end I'm interested in assigning new plots to 
+# existing clusters, therefore, the distance to the these clusters must be evaluated, therefore, I think medoids are better suited than 
+# hierarchy trees
+
+# https://www.statology.org/k-medoids-in-r/
+
+pam_wAG <- weight_rel_dist(data_list$forest_wone_wAG$plants)
+
+#fviz_nbclust(pam_wAG, FUNcluster = pam, method = "silhouette", diss = TRUE)
+# as the function as used above does not work, I#m using the following workaround:
+
+ks <- 2:25
+
+sil_width <- sapply(ks, function(k) {
+  pam_fit <- pam(pam_wAG, k, diss = TRUE)
+  pam_fit$silinfo$avg.width
+})
+plot(ks, sil_width, type = "b", xlab = "k", ylab = "Avg silhouette")
+
+pam_model <- pam(pam_wAG, 7, diss = TRUE)
+pam_model
+plot(pam_model)
+
+pca_wAG <- prcomp(pam_wAG)
+plot(pca_wAG$x[,1:2],
+     col = pam_model$clustering,
+     pch = 16,
+     xlab = "PC1", ylab = "PC2")
+
+pam_ord_wAG <- metaMDS(pam_wAG, k = 2)
+
+plot(pam_ord_wAG$points,
+     col = pam_model$clustering,
+     pch = 16)
+
+pam_model_help <- as.data.frame(pam_model$clustering)
+names(pam_model_help) <- c("cluster")
+pam_eval <- hdbscan_mismatch_evaluation(plants_nmds = nmds_object_imbalanced_wAG[[1]][[2]],
+                            plants_hdbscan = pam_model_help,
+                            grunddat = wone_wAG,
+                            coarse = TRUE)
+
+sum(pam_eval$mismatch) # not fitting into the cluster
+sum(pam_eval$mismatch==FALSE)
+
+adjustedRandIndex(pam_model$clustering, wone_wAG$BT_Land_group)
+cl_agreement(
+  as.cl_partition(pam_model$clustering),
+  as.cl_partition(wone_wAG$BT_Land_group),
+  method = "purity"
+)
+
+# scrutinize distribution of maximum abundance in plant data set ----------
+
+plants_wAG_max <- apply(data_list$forest_wone_wAG$plants[,-1], 1, max)
+table(as.numeric(plants_wAG_max)) # I need to check the 1 and 2s
+
+polygons_few_trees <- data_list$forest_wone_wAG$plants$Polygon[order(plants_wAG_max)]
+filter(grunddaten, Polygon %in% polygons_few_trees[1:36])
+plants_helper <- inner_join(wone_wAG[,c(1,2,4,5,24,25)],data_list$forest_wone_wAG$plants, by = "Polygon")
+plants_helper[plants_helper == 0] = NA
+check_polygons <- filter(pivot_longer(plants_helper, cols = where(is.numeric)& !Polygon ,names_to = "plant", values_to = "abundance", values_drop_na = TRUE), 
+       Polygon %in% polygons_few_trees[1:36])
+
+# check highest abundance in only trees
+trees_wzero_max <- apply(plants_trees_wzero$plants[,-1], 1, max)
+table(as.numeric(trees_wzero_max)) # I need to check the 1 and 2s
+
+polygons_few_trees_wzero <- plants_trees_wzero$plants$Polygon[order(trees_wzero_max)]
+polygons_few_trees_wzero_codes <- filter(grunddaten, Polygon %in% polygons_few_trees_wzero[1:311])
+# maybe exclude not only AGs, but also AVs and based on bund: 43.09.x, 39.02.x
+
+trees_wzero_wAG <- dplyr::filter(plants_trees_wzero[[2]], !BT_Land_group %in% c("AG", "AV")) # maybe &!BT_Land_group %in% c("43.09", "39.02"))
+plants_wone_wAG <- dplyr::filter(plants_trees_wzero[[1]], Polygon %in% trees_wzero_wAG$Polygon)
+wone_wAGAV_list <- list(plants = plants_wone_wAG, grunddaten = trees_wzero_wAG)
+
+plant_mat <- plant_weighting(wone_wAGAV_list$plants,w1 = 0.01,w2 = 0.02,w3 = 0.1,w4 = 0.95)
+plant_mat <- decostand(plant_mat, method = "total")
+
+wone_wAGAV_stress <- list()
+wone_wAGAV_stress[[1]] <- future_sapply(2:6, function(k){
+  median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = FALSE)$stress))
+}, future.seed = TRUE)
+plot(x = 2:6, y = wone_wAGAV_stress[[1]])
+
+wone_wAGAV_NMDS <- metaMDS(plant_mat, k = 2, trymax = 20)
+
+wone_wAGAV_list$grunddaten[c(ordination_outlier_func(wone_wAGAV_NMDS)),]
+control <- wone_wAGAV_list$plants[c(ordination_outlier_func(wone_wAGAV_NMDS)),]
+
+hdbscan_complete(wone_wAGAV_NMDS$points, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+
+# collapsing to genus level
+plant_wAGAV_genus <- wone_wAGAV_list$plants %>%
+  pivot_longer(-Polygon, names_to = "species", values_to = "abundance") %>%
+  mutate(genus = sub("(\\w+).*", "\\1", species)) %>%
+  group_by(Polygon, genus) %>%
+  summarise(abundance = max(abundance, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = genus, values_from = abundance, values_fill = 0)
+
+plant_wAGAV_genus_dist <- weight_rel_dist(plant_wAGAV_genus)
+hdbscan_complete(plant_wAGAV_genus_dist, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+clusterVScode(plant_wAGAV_genus_dist, grunddat = wone_wAGAV_list$grunddaten,bund = FALSE, pts = 9) #coarse = TRUE, 
+
+plant_wAGAV_genus_hdbscan <- hdbscan(plant_wAGAV_genus_dist,minPts = 9)
+cluster_control <- cbind(plant_wAGAV_genus_hdbscan$cluster,wone_wAGAV_list$grunddaten[,c(1,2,4,5,24,25)], plant_wAGAV_genus)
+# obviously, sometimes "Hainbuchen-Eichenmischwald" and "Eichen-Hainbuchen" are mixed-up
+
+plant_wAGAV_genus_dist_balanced <- weight_rel_dist(plant_wAGAV_genus,w1 = 0.01,w2 = 0.02,w3 = 0.1,w4 = 0.95)
+hdbscan_complete(plant_wAGAV_genus_dist_balanced, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+plant_wAGAV_genus_hdbscan <- hdbscan(plant_wAGAV_genus_dist2,minPts = 9)
+cluster_control <- cbind(plant_wAGAV_genus_hdbscan$cluster,wone_wAGAV_list$grunddaten[,c(1,2,4,5,24,25)], plant_wAGAV_genus)
+
+# maybe two cluster runs, one to get the distinct plots (the ones with a max abundance of 4) and one to seperate the remaining, in this 
+# case cluster number 13
+
+# check/prove hdbscan without NMDS performance ----------------------------
+
+plants_weight_wAG <- weight_rel_dist(data_list$forest_wone_wAG$plants)
+hdbscan_wAG_plants <- hdbscan_complete(plants_weight_wAG,grunddat = wone_wAG, by = 1)
+hdbscan_plot(hdbscan_wAG_plants, name = "HDBSCAN without NMDS")
+
+hdbscan_wAG_plants_wdif <- weight_rel_dist(data_list$forest_wone_wAG$plants, w1 = 0.01, w2 = 0.02, w3 = 0.05, w4 = 0.9)
+hdbscan_wAG_plants2 <- hdbscan_complete(hdbscan_wAG_plants_wdif,grunddat = wone_wAG, by = 1)
+hdbscan_plot(hdbscan_wAG_plants2, name = "HDBSCAN without NMDS")
+
+
 # further analysis --------------------------------------------------------
 
 
@@ -627,6 +807,16 @@ pcoa <- cmdscale(plants_forests_bray_short, k = 6)
 apply(pcoa, 2, var)
 pcoa_hdb <- hdbscan(pcoa[, 1:5], minPts = 10)
 table(pcoa_hdb$cluster, grunddaten_forests_red$`Biotoptyp-Bund`)
+
+# understanding decostand
+test_mat <- matrix(c(0.75,0.25,0.25,
+                     0.25,0.25, 0.01,
+                     1, 0.01,0.01,
+                     0.01, 0.01 ,0.01), nrow = 4, ncol = 3, byrow = TRUE)
+decostand(test_mat, method = "total")
+
+
+
 
 # Need to check later... --------------------------------------------------
 

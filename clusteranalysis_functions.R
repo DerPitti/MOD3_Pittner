@@ -12,6 +12,7 @@ plant_weighting <- function(plant_data, w1 = 0.01, w2 = 0.01, w3 = 0.01, w4 = 1)
   plants_weighted[plants_weighted == 2] <- w2 # 0.05
   plants_weighted[plants_weighted == 3] <- w3 # 0.25
   plants_weighted[plants_weighted == 4] <- w4 # 0.75
+  plants_weighted[plants_weighted == 9] <- w1 # 0.01, 9 means somehow seldom
   return(plants_weighted)
 }
 
@@ -150,8 +151,10 @@ hdbscan_mismatch_evaluation <- function(plants_nmds,plants_hdbscan, grunddat,
   
   if (bund) {
     df$biotope <- if (coarse) grunddat$`BT_Bund_group` else grunddat$`Biotoptyp-Bund`
+    df$NC <- grunddat$`NC Biotoptyp-Bund`
   } else {
     df$biotope <- if (coarse) grunddat$`BT_Land_group` else grunddat$`Biotoptyp-Land`
+    df$NC <- grunddat$`NC Biotoptyp-Land`
   }
   
   # looking to understand the mismatch in cluster and biotope codes
@@ -162,6 +165,10 @@ hdbscan_mismatch_evaluation <- function(plants_nmds,plants_hdbscan, grunddat,
   df$mismatch <- df$biotope != df$cluster_main
   return(df)
 }
+
+
+
+# Visualisation -----------------------------------------------------------
 
 
 hover_3D <- function(df){
