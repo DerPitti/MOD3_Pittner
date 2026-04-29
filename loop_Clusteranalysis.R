@@ -613,6 +613,84 @@ for(i in gmm_hell_eval$bic){
 for(i in gmm_hell_eval$uncertainty){
   print(i)
 }
+
+
+# grassland ---------------------------------------------------------------
+
+check_empty_plot(plants_grass)
+
+plants_occ_grass <- plant_occurences(plants_grass)
+
+# remove plants which only occured once or twice across all plots
+plants_grass_w_zero <- filter(plants_occ_grass, !total %in% c(0)) # maybe also 2
+plants_grass_wzero <- plants_grass[c("Polygon",plants_grass_w_zero$species)] # take all
+
+plants_grass_w_one <- filter(plants_occ_grass, !total %in% c(0,1)) # maybe also 2
+plants_grass_wone <- plants_grass[c("Polygon",plants_grass_w_one$species)] # take all
+check_empty_plot(plants_grass_wone)
+
+wone_grass_weight <- weight_rel_dist(plants_grass_wone)
+
+hdbscan_complete(wone_grass_weight, grunddat = grunddaten_grass)
+hdbscan_complete(wone_grass_weight, grunddat = grunddaten_grass, bund = FALSE)
+
+unique(grunddaten_grass$`Biotoptyp-Land`)
+table(grunddaten_grass$`Biotoptyp-Land`)
+
+hdbscan_complete(wone_grass_weight, grunddat = grunddaten_grass, bund = FALSE, coarse = TRUE)
+
+# understand abundance distribution
+grass_plant_dist <- plants_grass_wone[-1] %>%
+  rowwise() |>
+  summarise(mean_val = mean(na_if(c_across(-1), 0), na.rm = TRUE),
+            max_val = max(na_if(c_across(-1), 0), na.rm = TRUE))|>
+  ungroup()
+hist(grass_plant_dist$mean_val)
+table(grass_plant_dist$max_val)
+
+wone_grass_weight <- weight_rel_dist(plants_grass_wone,w1 = 0.01,w2 = 0.05,w3 = 0.25,w4 = 0.8)
+hdbscan_complete(wone_grass_weight, grunddat = grunddaten_grass, bund = FALSE, coarse = TRUE)
+hdbscan_complete(wone_grass_weight, grunddat = grunddaten_grass, bund = TRUE, coarse = TRUE)
+
+# try NMDS preprocessing
+plant_mat_grass <- plant_weighting(plants_grass_wone,w1 = 0.01,w2 = 0.05,w3 = 0.25,w4 = 0.75)
+plant_mat_grass <- decostand(plant_mat_grass, method = "total")
+wone_grass_stress <- list()
+wone_grass_stress[[1]] <- future_sapply(2:8, function(k){
+  median(replicate(2, metaMDS(plant_mat_grass, k = k, trymax = 3, trace = FALSE)$stress))
+}, future.seed = TRUE)
+
+plot(x = 2:8, y = wone_grass_stress[[1]])
+grass_wone_NMDS <- metaMDS(plant_mat_grass, k = 8, trymax = 20)
+
+hdbscan_complete(plants_dist = grass_wone_NMDS$points, grunddat = grunddaten_grass, by = 1, bund = FALSE)
+grass_wone_NMDS <- metaMDS(plant_mat_grass, k = 6, trymax = 20)
+hdbscan_complete(plants_dist = grass_wone_NMDS$points, grunddat = grunddaten_grass, by = 1, bund = FALSE)
+
+hdbscan_evaluation(grass_wone_NMDS$points, k = 10)
+
+# further simplification of data set
+plants_grass_w_two <- filter(plants_occ_grass, !total %in% c(0,1,2)) # maybe also 2
+plants_grass_wtwo <- plants_grass[c("Polygon",plants_grass_w_two$species)] # take all
+
+wtwo_grass_weight <- weight_rel_dist(plants_grass_wtwo,w1 = 0.01,w2 = 0.05,w3 = 0.25,w4 = 0.8)
+hdbscan_complete(wtwo_grass_weight, grunddat = grunddaten_grass, bund = TRUE, coarse = TRUE)
+hdbscan_complete(wtwo_grass_weight, grunddat = grunddaten_grass, bund = FALSE, coarse = TRUE)
+
+wtwo_grass_weight <- weight_rel_dist(plants_grass_wtwo,w1 = 0.01,w2 = 0.01,w3 = 0.01,w4 = 0.9)
+hdbscan_complete(wtwo_grass_weight, grunddat = grunddaten_grass, bund = FALSE, coarse = TRUE)
+
+# visualization attempt
+pca_grass <- prcomp(wone_grass_weight)
+plot_grass <- as.data.frame(pca_grass$x[, 1:2])
+plot_grass$biotope <- grunddaten_grass$BT_Land_group
+
+ggplot(plot_grass, aes(x = PC1, y = PC2, color = biotope)) +
+  geom_point(size = 2, alpha = 0.8) +
+  #scale_color_manual(values = c("0" = "grey70")) +
+  theme_minimal()
+
+
 # further analysis --------------------------------------------------------
 
 
