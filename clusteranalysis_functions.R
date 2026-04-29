@@ -12,6 +12,7 @@ plant_weighting <- function(plant_data, w1 = 0.01, w2 = 0.01, w3 = 0.01, w4 = 1)
   plants_weighted[plants_weighted == 2] <- w2 # 0.05
   plants_weighted[plants_weighted == 3] <- w3 # 0.25
   plants_weighted[plants_weighted == 4] <- w4 # 0.75
+  plants_weighted[plants_weighted == 9] <- w1 # 0.01, 9 means somehow seldom
   return(plants_weighted)
 }
 
@@ -51,6 +52,13 @@ remove_plots <- function(plant_data, grunddaten, remove_count = c(0)){
   return(list(plants = plants_data, grunddaten = grunddaten))
 }
 
+# remove biotope codes
+remove_land_biotope_code <- function(plant_data, grunddat, codes = c("AG")){
+  grunddat_red <- dplyr::filter(grunddat, !substr(`Biotoptyp-Land`,1,2) %in% codes)
+  plant_red <- dplyr::filter(plant_data, Polygon %in% grunddat_red$Polygon)
+  return(list(plants = plant_red, grunddaten = grunddat_red))
+}
+
 # hdbscan -----------------------------------------------------------------
 
 
@@ -79,7 +87,7 @@ clusterVScode <- function(plants_dist, pts, grunddat, bund = TRUE){
   }
 }
 
-hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse = FALSE){
+hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse = FALSE, print = TRUE){
   values <- data.frame(k = seq(3, 20,by = by),
                        clusters = rep(0, length(seq(3, 20,by = by))),
                        noise = rep(0, length(seq(3, 20,by = by))),
@@ -88,8 +96,10 @@ hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse 
   
   for (k in seq(3, 20,by = by)) {
     h <- hdbscan(plants_dist, minPts = k)
-    cat("minPts =", k, "-> clusters:", length(unique(h$cluster)), 
-        " noise:", sum(h$cluster == 0), "\n")
+    if(print == TRUE){
+      cat("minPts =", k, "-> clusters:", length(unique(h$cluster)), 
+          " noise:", sum(h$cluster == 0), "\n")
+    }
     values[values$k == k,2] <- length(unique(h$cluster))
     values[values$k == k,3] <- sum(h$cluster == 0)
     #table(h$cluster)
@@ -150,8 +160,10 @@ hdbscan_mismatch_evaluation <- function(plants_nmds,plants_hdbscan, grunddat,
   
   if (bund) {
     df$biotope <- if (coarse) grunddat$`BT_Bund_group` else grunddat$`Biotoptyp-Bund`
+    df$NC <- grunddat$`NC Biotoptyp-Bund`
   } else {
     df$biotope <- if (coarse) grunddat$`BT_Land_group` else grunddat$`Biotoptyp-Land`
+    df$NC <- grunddat$`NC Biotoptyp-Land`
   }
   
   # looking to understand the mismatch in cluster and biotope codes
@@ -162,6 +174,10 @@ hdbscan_mismatch_evaluation <- function(plants_nmds,plants_hdbscan, grunddat,
   df$mismatch <- df$biotope != df$cluster_main
   return(df)
 }
+
+
+
+# Visualisation -----------------------------------------------------------
 
 
 hover_3D <- function(df){
@@ -188,6 +204,8 @@ hover_3D <- function(df){
 
 # hülle around cluster in 3d
 hull_3D <- function(df, op_hull = 0.2, op_points = 0.7){
+  colourCount = length(unique(df$biotope))
+  getPalette = colorRampPalette(colors = c("red","green", "blue"))
   p <- plot_ly()
   
   for (grp in setdiff(unique(df$cluster), 0)) {

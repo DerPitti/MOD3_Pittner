@@ -88,13 +88,10 @@ data_list[["forest_complete"]] <-  list(plants = plants_forests_red, grunddaten 
 forest_complete_wone <- remove_plots(plants_forests_red, grunddaten_forests_red, remove_count = c(0,1))
 check_empty_plot(forest_complete_wone[[1]])
 
-data_list[["forest_complete_wone"]] <- forest_complete_wone
+data_list[["forest_complete_without_plots_only_one"]] <- forest_complete_wone
 
 forest_complete_wtwo <- remove_plots(plants_forests_red, grunddaten_forests_red, remove_count = c(0:2))
-data_list[["forest_complete_wtwo"]] <- forest_complete_wtwo
-
-forest_complete_wthree <- remove_plots(plants_forests_red, grunddaten_forests_red, remove_count = c(0:2))
-data_list[["forest_complete_wthree"]] <- forest_complete_wthree
+data_list[["forest_complete_without_plots_only_up_to_two"]] <- forest_complete_wtwo
 
 # add life forms
 plants_occ <- plant_occurences(plant_data = plants_forests_red)
@@ -120,41 +117,227 @@ plants_f_trees_w_one <- filter(plants_occ_forests, !total %in% c(0,1)) # maybe a
 plants_f_trees_wone <- plants_forests_red[c("Polygon",plants_f_trees_w_one$species)] # take all 
 # I'm using the plants_f_trees_wone for further reduction of the data
 
+### create an additional plant list simplified to genus-level
 
-# check number of plant species per plot -------------------------------------------------
+# collapsing to genus level
+plant_forest_genus <- plants_forests_red %>%
+  pivot_longer(-Polygon, names_to = "species", values_to = "abundance") %>%
+  mutate(genus = sub("(\\w+).*", "\\1", species)) %>%
+  group_by(Polygon, genus) %>%
+  summarise(abundance = max(abundance, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = genus, values_from = abundance, values_fill = 0)
+
+forest_complete_wone_genus <- remove_plots(plant_forest_genus, grunddaten_forests_red, remove_count = c(0,1))
+check_empty_plot(forest_complete_wone_genus[[1]])
+
+data_list[["forest_genus_without_plots_only_one"]] <- forest_complete_wone_genus
+
+forest_complete_wtwo_genus <- remove_plots(plant_forest_genus, grunddaten_forests_red, remove_count = c(0:2))
+data_list[["forest_genus_without_plots_only_up_to_two"]] <- forest_complete_wtwo_genus
+
+
+# control number of tree species per plot -------------------------------------------------
 
 check_empty_plot(plants_f_trees_wone)
 plants_trees_wzero <- remove_plots(plants_f_trees_wone, grunddaten_forests_red)
 check_empty_plot(plants_trees_wzero[[1]])
 
-data_list[["plants_trees_wzero"]] <- plants_trees_wzero
+data_list[["plants_without_zero_trees"]] <- plants_trees_wzero
 
 plants_trees_wone <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0,1))
 check_empty_plot(plants_trees_wone[[1]])
-data_list[["plants_trees_wone"]] <- plants_trees_wone
+data_list[["plants_without_one_tree"]] <- plants_trees_wone
 
 plants_trees_wtwo <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0:2))
 check_empty_plot(plants_trees_wtwo[[1]])
-data_list[["plants_trees_wtwo"]] <- plants_trees_wtwo
+data_list[["plants_without_only_up_to_two_trees"]] <- plants_trees_wtwo
 
-# plants_trees_wthree <- remove_plots(plants_f_trees_wone, grunddaten_forests_red, remove_count = c(0,1))
-# check_empty_plot(plants_trees_wthree[[1]])
-# data_list[["plants_trees_wthree"]] <- plants_trees_wthree
+# remove AG-biotope types -------------------------------------------------
+
+data_list[["forest_without_AG&plots_only_one"]] <- remove_land_biotope_code(forest_complete_wone[[1]], forest_complete_wone[[2]],c("AG"))
+data_list[["trees_without_AG&plots_without_zero"]] <- remove_land_biotope_code(plants_trees_wzero[[1]], plants_trees_wzero[[2]],c("AG"))
+data_list[["trees_without_AG&plots_without_up_to_one"]] <- remove_land_biotope_code(plants_trees_wone[[1]], plants_trees_wone[[2]],c("AG"))
+
+data_list[["trees_genus_without_AG&plots_without_up_to_one"]] <- remove_land_biotope_code(forest_complete_wone_genus[[1]], forest_complete_wone_genus[[2]],c("AG"))
+
+
+# check direct hdbscan application ----------------------------------------
+
+hdbscan_direct_list <- list()
+for(i in 1:length(data_list)){
+  weighting_plants <- weight_rel_dist(data_list[[i]]$plants)
+  hdbscan_run <- hdbscan_complete(weighting_plants,grunddat = data_list[[i]]$grunddaten, by = 1, print = FALSE)
+  hdbscan_direct_list[[names(data_list)[i]]][[1]] <- hdbscan_run
+  weighting_plants <- weight_rel_dist(data_list[[i]]$plants, w1 = 0.01, w2 = 0.05, w3 = 0.25, w4 = 0.9)
+  hdbscan_run <- hdbscan_complete(weighting_plants,grunddat = data_list[[i]]$grunddaten, by = 1, print = FALSE)
+  hdbscan_direct_list[[names(data_list)[i]]][[2]] <- hdbscan_run
+}
+
+for (i in 1:length(hdbscan_direct_list)) {
+  print(hdbscan_plot(hdbscan_direct_list[[i]][[1]], name = paste0(names(hdbscan_direct_list)[i],"-imbalanced")))
+  print(hdbscan_plot(hdbscan_direct_list[[i]][[2]], name = paste0(names(hdbscan_direct_list)[i],"-balanced")))
+}
+
+hdbscan_result_df <- function(hdbscan_list){
+  result_df <- bind_rows(lapply(names(hdbscan_list), function(main_name) {
+    sublist <- hdbscan_list[[main_name]]
+    n_total <- nrow(data_list[[main_name]][[1]])  
+    bind_rows(lapply(seq_along(sublist), function(sub_id) {
+      df <- sublist[[sub_id]]
+    df %>%
+      mutate(
+        list_name = main_name,
+        sublist_id = sub_id,
+        noise_prop = noise/n_total
+      )
+  }))
+  }))
+  return(result_df)}
+
+hdbscan_direct_result <- hdbscan_result_df(hdbscan_direct_list)
+
+hdbscan_direct_result$composed_metric <- (0.5*hdbscan_direct_result$ari+
+                                            0.4*hdbscan_direct_result$purity+0.1*(1-hdbscan_direct_result$noise_pro))
+hdbscan_direct_result$composed_metric_balanced <- (0.3*hdbscan_direct_result$ari+
+                                            0.3*hdbscan_direct_result$purity+0.3*(1-hdbscan_direct_result$noise_pro))
+hdbscan_direct_result %>%
+  group_by(list_name, sublist_id) %>%
+  slice_max(order_by = composed_metric, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(desc(composed_metric))
+
+hdbscan_direct_result %>%
+  filter(k < 16 & noise < 1000)%>%
+  group_by(list_name, sublist_id) %>%
+  slice_max(order_by = composed_metric, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(desc(composed_metric))
+
+ggplot(hdbscan_direct_result)+
+  geom_line(aes(x=k,y= composed_metric, colour = list_name))+
+  theme_classic()+
+  facet_wrap(facets = "sublist_id")
+
+#png("results/combined_evaluation_hdbscan.png", width = 3000, height = 2100, res = 300)
+ggplot(hdbscan_direct_result)+
+  geom_line(aes(x=k,y= composed_metric_balanced, colour = list_name))+
+  theme_classic()+
+  scale_color_discrete(name = "Plant data composition")+
+  labs(title = "equal weighting for performance", y = "performance (ARI + purity + noise)", x = "minimum size of cluster")+
+  facet_wrap(facets = "sublist_id", labeller = labeller(sublist_id=c("1"= "imbalanced conversion", "2"= "more balanced conversion")))
+#dev.off()
+
+max(hdbscan_direct_result$ari)
+
+
+# bund and coasre
+
+hdbscan_direct_list_coarse <- list()
+for(i in 1:length(data_list)){
+  weighting_plants <- weight_rel_dist(data_list[[i]]$plants)
+  hdbscan_run <- hdbscan_complete(weighting_plants,grunddat = data_list[[i]]$grunddaten, by = 1, print = FALSE, bund = FALSE, coarse = TRUE)
+  hdbscan_direct_list_coarse[[names(data_list)[i]]][[1]] <- hdbscan_run
+  weighting_plants <- weight_rel_dist(data_list[[i]]$plants, w1 = 0.01, w2 = 0.05, w3 = 0.25, w4 = 0.9)
+  hdbscan_run <- hdbscan_complete(weighting_plants,grunddat = data_list[[i]]$grunddaten, by = 1, print = FALSE, bund = FALSE, coarse = TRUE)
+  hdbscan_direct_list_coarse[[names(data_list)[i]]][[2]] <- hdbscan_run
+  
+}
+hdbscan_direct_result_coarse <- hdbscan_result_df(hdbscan_direct_list_coarse)
+
+hdbscan_direct_result_coarse$composed_metric <- (0.5*hdbscan_direct_result_coarse$ari+
+                                                   0.4*hdbscan_direct_result_coarse$purity+0.1*(1-hdbscan_direct_result_coarse$noise_pro))
+hdbscan_direct_result_coarse$composed_metric_balanced <- (0.3*hdbscan_direct_result_coarse$ari+
+                                                   0.3*hdbscan_direct_result_coarse$purity+0.3*(1-hdbscan_direct_result_coarse$noise_pro))
+
+
+hdbscan_direct_result_coarse %>%
+  group_by(list_name, sublist_id) %>%
+  slice_max(order_by = composed_metric, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(desc(composed_metric))
+
+#png("results/combined_evaluation_hdbscan_coarse_noise.png", width = 3000, height = 2100, res = 300)
+ggplot(hdbscan_direct_result_coarse)+
+  geom_line(aes(x=k,y= composed_metric_balanced, colour = list_name))+
+  theme_classic()+
+  scale_color_discrete(name = "Plant data composition")+
+  labs(title = "equal weighting for performance",y = "performance (ARI + purity + noise)", x = "minimum size of cluster")+
+  facet_wrap(facets = "sublist_id", labeller = labeller(sublist_id=c("1"= "imbalanced conversion", "2"= "more balanced conversion")))
+#dev.off()
+
+#png("results/combined_evaluation_hdbscan_coarse.png", width = 3000, height = 2100, res = 300)
+ggplot(hdbscan_direct_result_coarse)+
+  geom_line(aes(x=k,y= composed_metric, colour = list_name))+
+  theme_classic()+
+  scale_color_discrete(name = "Plant data composition")+
+  labs(title = "noise less weighted for performance" ,y = "performance (ARI + purity + noise)", x = "minimum size of cluster")+
+  facet_wrap(facets = "sublist_id", labeller = labeller(sublist_id=c("1"= "imbalanced conversion", "2"= "more balanced conversion")))
+#dev.off()
+
+hdbscan_complete(plants_dist = weight_rel_dist(data_list[["forest_without_AG&plots_only_one"]][[1]]),
+                 grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], coarse = TRUE, bund = FALSE)
+
+clusterVScode(plants_dist = weight_rel_dist(data_list[["forest_without_AG&plots_only_one"]][[1]]),
+              grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], pts = 11, bund = FALSE)
+
+### temporarily visualisation
+
+hdbscan_plot <- hdbscan(weight_rel_dist(data_list[["forest_without_AG&plots_only_one"]][[1]]), minPts = 11)
+
+# project multidemensional data into 2-D
+plant_mat <-plant_weighting(data_list[["forest_without_AG&plots_only_one"]][[1]])
+plant_mat <- decostand(plant_mat, method = "total")
+pca_plants <- prcomp(plant_mat)
+
+# two-dimensional
+plot_data <- as.data.frame(pca_plants$x[, 1:2])
+plot_data$cluster <- factor(hdbscan_plot$cluster)
+
+ggplot(plot_data, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  #scale_color_manual(values = c("0" = "grey70")) +
+  theme_minimal()
+
+plot_data$biotope <- data_list[["forest_without_AG&plots_only_one"]][[2]]$`Biotoptyp-Land`
+ggplot(plot_data, aes(PC1, PC2, color = biotope)) +
+  geom_point(size = 2) +
+  theme_minimal()
+
+# 3-dimensional; wrong naming to use already coded function!
+pca_3d <- list()
+pca_3d[["points"]] <- pca_plants$x
+hdbscan_eval <- hdbscan_mismatch_evaluation(pca_3d,hdbscan_plot,data_list[["forest_without_AG&plots_only_one"]][[2]], coarse = TRUE)
+sum(hdbscan_eval$mismatch==TRUE)
+sum(hdbscan_eval$cluster==0)
+
+hover_3D(hdbscan_eval)
+hull_3D(hdbscan_eval, op_hull = 0.6, op_points = 0.3)
+
+######
+
+hdbscan_direct_result_coarse %>%
+  filter(k < 16 & noise < 1000)%>%
+  group_by(list_name, sublist_id) %>%
+  slice_max(order_by = composed_metric, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(desc(composed_metric))
+
+
 
 
 # NMDS loop ---------------------------------------------------------------
 weighting <- data.frame(imbalanced = c(0.01,0.01,0.01,1),
-                        balanced = c(0.01,0.05,0.25,0.75))
+                        balanced = c(0.01,0.05,0.25,0.9))
 #stress_vals_backup <- stress_vals
 stress_vals <- list(imbalanced = list(), balanced = list())
 
 for(i in 1:2){
-  for (o in 1:length(data_list)) {
+  for (o in c()) { ### needs to be filled!
     plants <- data_list[[o]][[1]]
     plant_mat <- plant_weighting(plants,weighting[1,i],weighting[2,i],weighting[3,i],weighting[4,i])
     plant_mat <- decostand(plant_mat, method = "total") # first relative abundance; maybe for comparison hellinger transformation as well
     # find best dimensionality: via NMDS slowly...
-    stress_vals[[i]][[o]] <- future_sapply(2:6, function(k){
+    stress_vals[[i]][[names(data_list)[o]]] <- future_sapply(2:6, function(k){
       median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = FALSE)$stress))
     }, future.seed = TRUE)
   }
@@ -323,74 +506,6 @@ ggplot(plot_data, aes(PC1, PC2, color = cluster)) +
   theme_minimal()
 
 
-# 3D-plotting -------------------------------------------------------------
-
-df <- hdbscan_mismatch_evaluation(plants_nmds = test_one,
-                                  plants_hdbscan = test_one_hdbscan,
-                                  grunddat = data_list[[names(plants)[2]]][[2]],
-                                  coarse = TRUE)
-
-sum(df$mismatch) # not fitting into the cluster
-sum(df$mismatch==FALSE)
-
-plot_ly(df,
-        x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
-        color = ~mismatch,
-        colors = c("FALSE" = "black", "TRUE" = "red"),
-        type = "scatter3d",
-        mode = "markers")
-
-
-
-plot_ly(df,
-        x = ~NMDS1,
-        y = ~NMDS2,
-        z = ~NMDS3,
-        color = ~cluster,
-        colors = "Set1",
-        type = "scatter3d",
-        mode = "markers",
-        marker = list(size = 3)) %>%
-  layout(scene = list(xaxis = list(title = "NMDS1"),
-                      yaxis = list(title = "NMDS2"),
-                      zaxis = list(title = "NMDS3")))
-
-# for biotope colouring
-colourCount = length(unique(df$biotope))
-getPalette = colorRampPalette(colors = c("red","green", "blue"))
-
-plot_ly(df,
-        x = ~NMDS1,
-        y = ~NMDS2,
-        z = ~NMDS3,
-        color = ~biotope,
-        colors = getPalette(colourCount),
-        type = "scatter3d",
-        mode = "markers",
-        marker = list(size = 3)) %>%
-  layout(scene = list(xaxis = list(title = "NMDS1"),
-                      yaxis = list(title = "NMDS2"),
-                      zaxis = list(title = "NMDS3")))
-
-
-# with hovering
-df$label <- paste("Cluster:", df$cluster,
-                  "<br>Biotope:", df$biotope)
-
-plot_ly(df,
-        x = ~NMDS1, y = ~NMDS2, z = ~NMDS3,
-        color = ~cluster,
-        colors = getPalette(colourCount),
-        text = ~label,
-        hoverinfo = "text",
-        type = "scatter3d",
-        mode = "markers",
-        marker = list(size = 3)) %>%
-  layout(scene = list(xaxis = list(title = "NMDS1"),
-                      yaxis = list(title = "NMDS2"),
-                      zaxis = list(title = "NMDS3")))
-
-hover_3D(df=df)
 
 # remove AG-biotope types -------------------------------------------------
 
@@ -507,4 +622,68 @@ ggplot(as.data.frame(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)),
   theme_minimal()
 
 #load("260406_1001.Rdata")
+
+# scrutinize distribution of maximum abundance in plant data set ----------
+
+plants_wAG_max <- apply(data_list$forest_wone_wAG$plants[,-1], 1, max)
+table(as.numeric(plants_wAG_max)) # I need to check the 1 and 2s
+
+polygons_few_trees <- data_list$forest_wone_wAG$plants$Polygon[order(plants_wAG_max)]
+filter(grunddaten, Polygon %in% polygons_few_trees[1:36])
+plants_helper <- inner_join(wone_wAG[,c(1,2,4,5,24,25)],data_list$forest_wone_wAG$plants, by = "Polygon")
+plants_helper[plants_helper == 0] = NA
+check_polygons <- filter(pivot_longer(plants_helper, cols = where(is.numeric)& !Polygon ,names_to = "plant", values_to = "abundance", values_drop_na = TRUE), 
+                         Polygon %in% polygons_few_trees[1:36])
+
+# check highest abundance in only trees
+trees_wzero_max <- apply(plants_trees_wzero$plants[,-1], 1, max)
+table(as.numeric(trees_wzero_max)) # I need to check the 1 and 2s
+
+polygons_few_trees_wzero <- plants_trees_wzero$plants$Polygon[order(trees_wzero_max)]
+polygons_few_trees_wzero_codes <- filter(grunddaten, Polygon %in% polygons_few_trees_wzero[1:311])
+# maybe exclude not only AGs, but also AVs and based on bund: 43.09.x, 39.02.x
+
+trees_wzero_wAG <- dplyr::filter(plants_trees_wzero[[2]], !BT_Land_group %in% c("AG", "AV")) # maybe &!BT_Land_group %in% c("43.09", "39.02"))
+plants_wone_wAG <- dplyr::filter(plants_trees_wzero[[1]], Polygon %in% trees_wzero_wAG$Polygon)
+wone_wAGAV_list <- list(plants = plants_wone_wAG, grunddaten = trees_wzero_wAG)
+
+plant_mat <- plant_weighting(wone_wAGAV_list$plants,w1 = 0.01,w2 = 0.02,w3 = 0.1,w4 = 0.95)
+plant_mat <- decostand(plant_mat, method = "total")
+
+wone_wAGAV_stress <- list()
+wone_wAGAV_stress[[1]] <- future_sapply(2:6, function(k){
+  median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = FALSE)$stress))
+}, future.seed = TRUE)
+plot(x = 2:6, y = wone_wAGAV_stress[[1]])
+
+wone_wAGAV_NMDS <- metaMDS(plant_mat, k = 2, trymax = 20)
+
+wone_wAGAV_list$grunddaten[c(ordination_outlier_func(wone_wAGAV_NMDS)),]
+control <- wone_wAGAV_list$plants[c(ordination_outlier_func(wone_wAGAV_NMDS)),]
+
+hdbscan_complete(wone_wAGAV_NMDS$points, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+
+# collapsing to genus level
+plant_wAGAV_genus <- wone_wAGAV_list$plants %>%
+  pivot_longer(-Polygon, names_to = "species", values_to = "abundance") %>%
+  mutate(genus = sub("(\\w+).*", "\\1", species)) %>%
+  group_by(Polygon, genus) %>%
+  summarise(abundance = max(abundance, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = genus, values_from = abundance, values_fill = 0)
+
+plant_wAGAV_genus_dist <- weight_rel_dist(plant_wAGAV_genus)
+hdbscan_complete(plant_wAGAV_genus_dist, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+clusterVScode(plant_wAGAV_genus_dist, grunddat = wone_wAGAV_list$grunddaten,bund = FALSE, pts = 9) #coarse = TRUE, 
+
+plant_wAGAV_genus_hdbscan <- hdbscan(plant_wAGAV_genus_dist,minPts = 9)
+cluster_control <- cbind(plant_wAGAV_genus_hdbscan$cluster,wone_wAGAV_list$grunddaten[,c(1,2,4,5,24,25)], plant_wAGAV_genus)
+# obviously, sometimes "Hainbuchen-Eichenmischwald" and "Eichen-Hainbuchen" are mixed-up
+
+plant_wAGAV_genus_dist_balanced <- weight_rel_dist(plant_wAGAV_genus,w1 = 0.01,w2 = 0.02,w3 = 0.1,w4 = 0.95)
+hdbscan_complete(plant_wAGAV_genus_dist_balanced, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+plant_wAGAV_genus_hdbscan <- hdbscan(plant_wAGAV_genus_dist2,minPts = 9)
+cluster_control <- cbind(plant_wAGAV_genus_hdbscan$cluster,wone_wAGAV_list$grunddaten[,c(1,2,4,5,24,25)], plant_wAGAV_genus)
+
+# maybe two cluster runs, one to get the distinct plots (the ones with a max abundance of 4) and one to seperate the remaining, in this 
+# case cluster number 13
 
