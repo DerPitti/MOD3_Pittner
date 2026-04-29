@@ -606,7 +606,86 @@ for(i in gmm_hell_eval$bic){
 for(i in gmm_hell_eval$uncertainty){
   print(i)
 }
+
+###
+# scrutinize distribution of maximum abundance in plant data set ----------
+
+plants_wAG_max <- apply(data_list$forest_wone_wAG$plants[,-1], 1, max)
+table(as.numeric(plants_wAG_max)) # I need to check the 1 and 2s
+
+polygons_few_trees <- data_list$forest_wone_wAG$plants$Polygon[order(plants_wAG_max)]
+filter(grunddaten, Polygon %in% polygons_few_trees[1:36])
+plants_helper <- inner_join(wone_wAG[,c(1,2,4,5,24,25)],data_list$forest_wone_wAG$plants, by = "Polygon")
+plants_helper[plants_helper == 0] = NA
+check_polygons <- filter(pivot_longer(plants_helper, cols = where(is.numeric)& !Polygon ,names_to = "plant", values_to = "abundance", values_drop_na = TRUE), 
+                         Polygon %in% polygons_few_trees[1:36])
+
+# check highest abundance in only trees
+trees_wzero_max <- apply(plants_trees_wzero$plants[,-1], 1, max)
+table(as.numeric(trees_wzero_max)) # I need to check the 1 and 2s
+
+polygons_few_trees_wzero <- plants_trees_wzero$plants$Polygon[order(trees_wzero_max)]
+polygons_few_trees_wzero_codes <- filter(grunddaten, Polygon %in% polygons_few_trees_wzero[1:311])
+# maybe exclude not only AGs, but also AVs and based on bund: 43.09.x, 39.02.x
+
+trees_wzero_wAG <- dplyr::filter(plants_trees_wzero[[2]], !BT_Land_group %in% c("AG", "AV")) # maybe &!BT_Land_group %in% c("43.09", "39.02"))
+plants_wone_wAG <- dplyr::filter(plants_trees_wzero[[1]], Polygon %in% trees_wzero_wAG$Polygon)
+wone_wAGAV_list <- list(plants = plants_wone_wAG, grunddaten = trees_wzero_wAG)
+
+plant_mat <- plant_weighting(wone_wAGAV_list$plants,w1 = 0.01,w2 = 0.02,w3 = 0.1,w4 = 0.95)
+plant_mat <- decostand(plant_mat, method = "total")
+
+wone_wAGAV_stress <- list()
+wone_wAGAV_stress[[1]] <- future_sapply(2:6, function(k){
+  median(replicate(2, metaMDS(plant_mat, k = k, trymax = 3, trace = FALSE)$stress))
+}, future.seed = TRUE)
+plot(x = 2:6, y = wone_wAGAV_stress[[1]])
+
+wone_wAGAV_NMDS <- metaMDS(plant_mat, k = 2, trymax = 20)
+
+wone_wAGAV_list$grunddaten[c(ordination_outlier_func(wone_wAGAV_NMDS)),]
+control <- wone_wAGAV_list$plants[c(ordination_outlier_func(wone_wAGAV_NMDS)),]
+
+hdbscan_complete(wone_wAGAV_NMDS$points, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+
+# collapsing to genus level
+plant_wAGAV_genus <- wone_wAGAV_list$plants %>%
+  pivot_longer(-Polygon, names_to = "species", values_to = "abundance") %>%
+  mutate(genus = sub("(\\w+).*", "\\1", species)) %>%
+  group_by(Polygon, genus) %>%
+  summarise(abundance = max(abundance, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = genus, values_from = abundance, values_fill = 0)
+
+plant_wAGAV_genus_dist <- weight_rel_dist(plant_wAGAV_genus)
+hdbscan_complete(plant_wAGAV_genus_dist, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+clusterVScode(plant_wAGAV_genus_dist, grunddat = wone_wAGAV_list$grunddaten,bund = FALSE, pts = 9) #coarse = TRUE, 
+
+plant_wAGAV_genus_hdbscan <- hdbscan(plant_wAGAV_genus_dist,minPts = 9)
+cluster_control <- cbind(plant_wAGAV_genus_hdbscan$cluster,wone_wAGAV_list$grunddaten[,c(1,2,4,5,24,25)], plant_wAGAV_genus)
+# obviously, sometimes "Hainbuchen-Eichenmischwald" and "Eichen-Hainbuchen" are mixed-up
+
+plant_wAGAV_genus_dist_balanced <- weight_rel_dist(plant_wAGAV_genus,w1 = 0.01,w2 = 0.02,w3 = 0.1,w4 = 0.95)
+hdbscan_complete(plant_wAGAV_genus_dist_balanced, grunddat = wone_wAGAV_list$grunddaten,coarse = TRUE, bund = FALSE, by = 1)
+plant_wAGAV_genus_hdbscan <- hdbscan(plant_wAGAV_genus_dist2,minPts = 9)
+cluster_control <- cbind(plant_wAGAV_genus_hdbscan$cluster,wone_wAGAV_list$grunddaten[,c(1,2,4,5,24,25)], plant_wAGAV_genus)
+
+# maybe two cluster runs, one to get the distinct plots (the ones with a max abundance of 4) and one to seperate the remaining, in this 
+# case cluster number 13
+
+# check/prove hdbscan without NMDS performance ----------------------------
+
+plants_weight_wAG <- weight_rel_dist(data_list$forest_wone_wAG$plants)
+hdbscan_wAG_plants <- hdbscan_complete(plants_weight_wAG,grunddat = wone_wAG, by = 1)
+hdbscan_plot(hdbscan_wAG_plants, name = "HDBSCAN without NMDS")
+
+hdbscan_wAG_plants_wdif <- weight_rel_dist(data_list$forest_wone_wAG$plants, w1 = 0.01, w2 = 0.02, w3 = 0.05, w4 = 0.9)
+hdbscan_wAG_plants2 <- hdbscan_complete(hdbscan_wAG_plants_wdif,grunddat = wone_wAG, by = 1)
+hdbscan_plot(hdbscan_wAG_plants2, name = "HDBSCAN without NMDS")
+
+
+
 # further analysis --------------------------------------------------------
+
 
 
 # reveal indicator species
