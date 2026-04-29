@@ -25,12 +25,6 @@ life_forms <- read_xlsx("data/Life_form.xlsx") # load life form data https://flo
 grunddaten$BT_Bund_group <- substr(grunddaten$`Biotoptyp-Bund`,1,5)
 grunddaten$BT_Land_group <- substr(grunddaten$`Biotoptyp-Land`,1,2)
 
-# find plots with completely identical attributes
-duplicates <- grunddaten %>%
-  group_by(grunddaten[,-1])%>%
-  filter(n()>1) %>%
-  ungroup()
-
 
 # Removal of data sets with non-meaningful plant composition --------------
 
@@ -39,10 +33,8 @@ remove_polygons <- filter(grunddaten, substr(`Biotoptyp-Land`,1,1) %in% c("F", "
 remove_polygons2 <- filter(grunddaten, !Polygon %in% plants$Polygon & !substr(`Biotoptyp-Land`,1,1) %in% c("F", "V", "W"))
 
 remove_poly <- rbind(remove_polygons, remove_polygons2)
-
 plants_sub <- filter(plants, !Polygon %in% remove_poly$Polygon)
 grunddaten_sub <- filter(grunddaten, !Polygon %in% remove_poly$Polygon)
-
 
 # transformation of plant data frame
 
@@ -82,7 +74,8 @@ plants_forests <- filter(plants_wide, Polygon %in% grunddaten_forests$Polygon)
 # further reduction of forest data ---------------------------------------------
 
 # remove "AT... and "AU..."
-grunddaten_forests_red <- filter(grunddaten_forests, !substr(`Biotoptyp-Land`,1,2) %in% c("AT", "AU"))
+check_biotope_codes <- unique(grunddaten_forests[,c(4,5)])
+grunddaten_forests_red <- filter(grunddaten_forests, !substr(`Biotoptyp-Land`,1,2) %in% c("AT", "AU", "AV"))
 plants_forests_red <- filter(plants_forests, Polygon %in% grunddaten_forests_red$Polygon)
 
 ### store plants and grunddaten in list for looping later, each list entry contains two list entries with first plants, then grunddaten
