@@ -356,37 +356,74 @@ hull_3D <- function(df, op_hull = 0.2, op_points = 0.7){
 }
 
 ### gmm functions
-evaluate_gmm <- function(gmm_list){
-  mclust_tabs_total <- list()
-  ari_values <- list()
-  bic_values <- list()
-  uncertainty_values <- list()
-  for(i in 1:length(gmm_list)){
-    bio_data <- data_list[[i]][[2]]$`BT_Land_group`
-    tab <- table(Cluster = gmm_list[[i]][[1]]$classification,
-                 Biotope = bio_data)
-    df_tab <- as.data.frame(tab)
-    df_tab$run <- 1
-    ari <- adjustedRandIndex(gmm_list[[i]][[1]]$classification, bio_data)
-    bic <- gmm_list[[i]][[1]]$bic
-    uncertainty <- mean(gmm_list[[i]][[1]]$uncertainty)
-    for(o in 2:4){
-      tab <- table(Cluster = gmm_list[[i]][[o]]$classification,
-                   Biotope = bio_data)
-      df_tab_temp <- as.data.frame(tab)
-      df_tab_temp$run <- o
-      df_tab <- rbind(df_tab,df_tab_temp)
-      ari <-  c(ari,adjustedRandIndex(gmm_list[[i]][[o]]$classification, bio_data))
-      bic <- c(bic, gmm_list[[i]][[o]]$bic)
-      uncertainty <- c(uncertainty, mean(gmm_list[[i]][[o]]$uncertainty))
-    }
-    mclust_tabs_total[[i]] <- df_tab
-    ari_values[[i]] <- ari
-    bic_values[[i]] <- bic
-    uncertainty_values[[i]] <- uncertainty
-  }
-  return(list(tab_plot = mclust_tabs_total, ari_values =ari_values,
-              bic = bic_values, uncertainty = uncertainty_values))
+evaluate_gmm <- function(gmm_list, grunddat_list) {
+  
+  results <- lapply(names(gmm_list), function(name) {
+    
+    gmm_model <- gmm_list[[name]]
+    
+    # get labels
+    labels_group <- grunddat_list[[name]][[2]][["BT_Land_group"]]
+    labels <- grunddat_list[[name]][[2]][["Biotoptyp-Land"]]
+    
+    clusters <- gmm_model$classification
+    
+    # contingency table
+    tab <- as.data.frame(table(
+      Cluster = clusters,
+      Biotope = labels
+    ))
+    
+    # ARI
+    ari <- mclust::adjustedRandIndex(clusters, labels)
+    ari_group <- mclust::adjustedRandIndex(clusters, labels_group)
+    
+    # Purity
+    purity <- as.numeric(clue::cl_agreement(
+      clue::as.cl_partition(clusters),
+      clue::as.cl_partition(labels),
+      method = "purity"
+    ))
+    purity_group <- as.numeric(clue::cl_agreement(
+      clue::as.cl_partition(clusters),
+      clue::as.cl_partition(labels_group),
+      method = "purity"
+    ))
+    
+    # BIC (best model)
+    bic <- max(gmm_model$BIC, na.rm = TRUE)
+    
+    # uncertainty
+    uncertainty <- mean(gmm_model$uncertainty)
+    # number cluster
+    cluster <- gmm_model$G
+    
+    list(
+      dataset = name,
+      tab = tab,
+      metrics = data.frame(
+        dataset = name,
+        cluster = cluster,
+        ari = ari,
+        ari_group = ari_group,
+        purity = purity,
+        purity_group = purity_group,
+        combined = 0.5*ari+0.5*purity,
+        combined_group = 0.5*ari_group+0.5* purity_group,
+        bic = bic,
+        uncertainty = uncertainty
+      )
+    )
+  })
+  
+  # combine outputs
+  tab_plot <- lapply(results, `[[`, "tab")
+  metrics <- dplyr::bind_rows(lapply(results, `[[`, "metrics"))
+  
+  return(list(
+    tab_plot = tab_plot,
+    metrics = metrics
+  ))
 }
 
 
@@ -405,17 +442,17 @@ evaluate_pam_models <- function(pam_list, grunddat_list) {
       clusters <- pam_model$clustering
       
       ari <- mclust::adjustedRandIndex(clusters, labels)
-      purity <- clue::cl_agreement(
+      purity <- as.numeric(clue::cl_agreement(
         clue::as.cl_partition(clusters),
         clue::as.cl_partition(labels),
         method = "purity"
-      )
+      ))
       ari_group <- mclust::adjustedRandIndex(clusters, labels_group)
-      purity_group <- clue::cl_agreement(
+      purity_group <- as.numeric(clue::cl_agreement(
         clue::as.cl_partition(clusters),
         clue::as.cl_partition(labels_group),
         method = "purity"
-      )
+      ))
       
       data.frame(
         dataset = dataset_name,

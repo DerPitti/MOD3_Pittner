@@ -352,44 +352,94 @@ pam_sil_list <- list()
 
 # https://j-sephb-lt-n.github.io/exploring_statistics/PAMS_and_SILHOUETTE_by_hand.html
 
-pam_sil_list <- future_lapply(names(plant_comp_dist), function(name) {
+pam_results <- future_lapply(names(plant_comp_dist), function(name) {
   dist_mat <- plant_comp_dist[[name]]
-  sil_width <- sapply(ks, function(k) {
+  res <- lapply(ks, function(k) {
+    
     pam_fit <- cluster::pam(dist_mat, k, diss = TRUE)
-    pam_fit$silinfo$avg.width
+    
+    list(
+      k = k,
+      sil_width = pam_fit$silinfo$avg.width,
+      clustering = pam_fit$clustering
+    )
   })
   
-  data.frame(
-    dataset = name,
-    k = ks,
-    sil_width = sil_width
-  )
-})
-pam_sil_df <- dplyr::bind_rows(pam_sil_list)
-pam_sil_df %>%
-  group_by(dataset)%>%
-  slice_max(order_by = sil_width, n = 1, with_ties = FALSE) %>%
-  ungroup()
+  names(res) <- ks
+  res
+}, future.seed = TRUE)
 
-ggplot(pam_sil_df, aes(x = k, y = sil_width, col = dataset))+
-  geom_line()+
-  theme_classic()+
-  labs(y = "Avg silhouette")
+names(pam_results) <- names(plant_comp_dist)
+
+# pam_sil_df <- dplyr::bind_rows(pam_sil_list)
+# pam_sil_df %>%
+#   group_by(dataset)%>%
+#   slice_max(order_by = sil_width, n = 1, with_ties = FALSE) %>%
+#   ungroup()
+# 
+# ggplot(pam_sil_df, aes(x = k, y = sil_width, col = dataset))+
+#   geom_line()+
+#   theme_classic()+
+#   labs(y = "Avg silhouette")
 
 # evaluate with metrics
-pam_evaluation <- evaluate_pam_models(pam_sil_list, data_list_comp)
+pam_evaluation <- evaluate_pam_models(pam_results, data_list_comp)
+pam_evaluation_plot <- pivot_longer(pam_evaluation, cols = -c(dataset, k), names_to = "metric", values_to = "value")
+
+# png("results/PAM_evaluation.png", width = 3000, height = 2100, res = 350)
+ggplot(pam_evaluation_plot)+
+  geom_line(aes(x = k, y = value, colour = dataset))+
+  theme_classic()+
+  labs(title = "PAM evaluation")+
+  facet_wrap(facets = "metric")
+# dev.off()
 
 
-pam_model_list <- list()
-for(i in 1:length(plant_comp_dist)){
-  pam_model_list[[names(plant_comp_dist)[i]]] <- pam(plant_comp_dist[[i]], k=k_vals[i], diss = TRUE) 
+# GMM ---------------------------------------------------------------------
+
+plant_comp_gmm <- list()
+plant_comp_gmm_bray <- list()
+
+for(i in 1: length(scenario_names)){
+  if(scenario_balance[i]== 2){
+    dist_mat <- plant_weighting(data_list_comp[[i]][[1]],w1 = 0.01, w2 = 0.05, w3 = 0.25, w4 = 0.9)
+  } else{
+    dist_mat <- plant_weighting(data_list_comp[[i]][[1]],)
+  }
+  rel_mat <- decostand(dist_mat, method = "total")
+  plant_comp_gmm[[names(data_list_comp)[i]]] <- dist_mat
+  rel_mat <- decostand(dist_mat, method = "hellinger")
+  plant_comp_gmm_bray[[names(data_list_comp)[i]]] <- dist_mat
 }
 
-pam_model_list[[1]]$
-plot(pam_model_list[[1]])
+gmm_results <- future_lapply(names(plant_comp_gmm), function(name) {
+  rel_mat <- plant_comp_gmm[[name]]
+  gmm_fit <- Mclust(rel_mat)
+    }, future.seed = TRUE)
+
+names(gmm_results) <- names(plant_comp_dist)
 
 
-# NMDS loop ---------------------------------------------------------------
+# visualize/evaluate results
+
+gmm_total_eval <- evaluate_gmm(gmm_results, data_list_comp)
+gmm_total_eval$metrics[,c(1,2,9,10)]
+
+gmm_evaluation_plot <- pivot_longer(gmm_total_eval$metrics, cols = -c(dataset,cluster, bic, uncertainty), names_to = "metric", values_to = "value")
+
+# png("results/GMM_evaluation_total.png", width = 3000, height = 2100, res = 350)
+ggplot(gmm_evaluation_plot)+
+  geom_path(aes(x = factor(dataset, levels = names(plant_comp_dist)), y = value, colour = metric, group = metric))+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  labs(title = "GMM evaluation-total", x = "dataset")
+dev.off()
+
+#################
+
+
+
+# NMDS loop ---------------# NMDS loop ---------------# NMDS loop ---------------------------------------------------------------
 weighting <- data.frame(imbalanced = c(0.01,0.01,0.01,1),
                         balanced = c(0.01,0.05,0.25,0.9))
 #stress_vals_backup <- stress_vals
@@ -654,17 +704,6 @@ pam_wAG <- weight_rel_dist(data_list$forest_wone_wAG$plants)
 #fviz_nbclust(pam_wAG, FUNcluster = pam, method = "silhouette", diss = TRUE)
 # as the function as used above does not work, I'm using the following workaround:
 
-ks <- 2:25
-
-sil_width <- sapply(ks, function(k) {
-  pam_fit <- pam(pam_wAG, k, diss = TRUE)
-  pam_fit$silinfo$avg.width
-})
-plot(ks, sil_width, type = "b", xlab = "k", ylab = "Avg silhouette")
-
-pam_model <- pam(pam_wAG, 7, diss = TRUE)
-pam_model
-plot(pam_model)
 
 pca_wAG <- prcomp(pam_wAG)
 plot(pca_wAG$x[,1:2],
