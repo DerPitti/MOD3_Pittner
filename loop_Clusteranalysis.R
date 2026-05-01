@@ -275,7 +275,7 @@ ggplot(hdbscan_direct_result_coarse)+
 #dev.off()
 
 hdbscan_complete(plants_dist = weight_rel_dist(data_list[["forest_without_AG&plots_only_one"]][[1]]),
-                 grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], coarse = TRUE, bund = FALSE)
+                 grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], coarse = TRUE, bund = FALSE, by = 1)
 
 clusterVScode(plants_dist = weight_rel_dist(data_list[["forest_without_AG&plots_only_one"]][[1]]),
               grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], pts = 11, bund = FALSE)
@@ -528,20 +528,27 @@ df_plot_3d <- hdbscan_mismatch_evaluation(visualisation_3_nmds, hdbscan_plot,
                             grunddat = grunddat_temp, coarse = TRUE)
 
 sum(df_plot_3d$mismatch) # not fitting into the cluster
+
+sum(df_plot_3d$mismatch[!df_plot_3d$cluster %in% c(0,17)])
 sum(df_plot_3d$mismatch==FALSE)
 
 hover_3D(df_plot_3d)
+hover_3D(df_plot_3d[!df_plot_3d$cluster %in% c(0,17),])
 hull_3D(df_plot_3d, op_hull = 0.6, op_points = 0.3)
+hull_3D(df_plot_3d[!df_plot_3d$cluster %in% c(0,17),], op_hull = 0.6, op_points = 0.3)
 
 ####
 legend_labels <- unique(df_plot_3d[,c(4, 7)])
 legend_labels$combined <- paste0(legend_labels$cluster, ": ",legend_labels$cluster_main)
 legend_labels <- legend_labels[order(legend_labels$cluster),]
-plot(hdbscan_plot, show_flat = TRUE)
-legend("topright",
-       legend = legend_labels$combined,
-       ncol = 3)
 
+#png("results/hdbscan_tree_coarse.png", width = 3000, height = 2100, res = 300)
+plot(hdbscan_plot, show_flat = TRUE, main = "HDBSCAN tree")
+legend("topright",
+       legend = legend_labels$combined[-1],
+       ncol = 3,
+       title = "Main biotope code per cluster")
+# dev.off()
 
 ####
 
@@ -556,10 +563,13 @@ hull_3D(df_plot_3d5, op_hull = 0.6, op_points = 0.3)  # nicer hull
 table(hdbscan_plot$cluster, grunddat_temp$`Biotoptyp-Land`)
 table(hdbscan_plot$cluster, grunddat_temp$`BT_Land_group`)
 
-prop.table(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`), margin=1)
-prop.table(t(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)), margin=1)
+check_cluster_pureness <- as.data.frame(prop.table(table(hdbscan_plot$cluster, grunddat_temp$`BT_Land_group`), margin=1))
+ggplot(data = check_cluster_pureness, aes(x = Var1, y = Freq, fill = Var2))+
+  geom_bar(stat = "identity")
+  
+prop.table(t(table(hdbscan_plot$cluster, grunddat_temp$`BT_Land_group`)), margin=1)
 
-ggplot(as.data.frame(table(hdbscan_wAG$cluster, wone_wAG$`BT_Land_group`)),
+ggplot(as.data.frame(table(hdbscan_plot$cluster, grunddat_temp$`BT_Land_group`)),
        aes(Var2, Freq, colour = Var1, fill = Var1)) +
   geom_bar(stat = "identity")+
   theme_minimal()
@@ -577,22 +587,69 @@ embedding <- umap(
   dist_mat,
   metric = "braycurtis",
   nn_method = "nndescent",
+  n_neighbors = 10,
+  n_components = 10,
+  min_dist = 0.15
 )
 
-hdbscan_complete(embedding,by = 1, grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], bund = FALSE, coarse = FALSE)
+hdbscan_complete(embedding,by = 1, grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], bund = FALSE, coarse = TRUE)
+umap_hdbscan <- hdbscan(embedding, minPts = 13)
+umap_cluster_pureness <- as.data.frame(prop.table(table(umap_hdbscan$cluster, grunddat_temp$`BT_Land_group`), margin=1))
 
-# remove AG-biotope types -------------------------------------------------
+ggplot(data = umap_cluster_pureness, aes(x = Var1, y = Freq, fill = Var2))+
+  geom_bar(stat = "identity")
+
+ggplot(as.data.frame(table(umap_hdbscan$cluster, grunddat_temp$`BT_Land_group`)),
+       aes(Var2, Freq, colour = Var1, fill = Var1)) +
+  geom_bar(stat = "identity")+
+  theme_minimal()
+
+### umap with the right setting allows to decrease the noise fraction in return for lower ari
+
+# second cluster round -------------------------------------------------
+
+plants_second_round <- data_list[["forest_without_AG&plots_only_one"]][[1]][hdbscan_plot$cluster %in% c(0,17),]
+grunddat_second_round <- filter(grunddaten_forests_red, Polygon %in% plants_second_round$Polygon)
+
+plants_second_max <- apply(plants_second_round[,-1], 1, max)
+table(as.numeric(plants_second_max)) # I need to check the 1 and 2s
+
+
+check_plants <- cbind(plants_second_max, plants_second_round)
+check_plants <- right_join(grunddat_temp[,c(1,4,5,25)], check_plants, by = "Polygon")
+
+check_plants[check_plants == 0] = NA
+check_polygons <- pivot_longer(check_plants, cols = where(is.numeric)& !Polygon & !plants_second_max ,names_to = "plant", values_to = "abundance", values_drop_na = TRUE) 
+                         # plants_second_round[order(plants_second_round$Polygon),]
 
 
 
+max_weigthing <- function(plants_mat, w1 = 0.01, w2 = 0.01, w3 = 0.01, w4 = 1, method = "bray"){
+  plant_return <- plants_mat[-1]
+  plants_max <- apply(plants_mat[,-1], 1, max)
+  for(i in 1:nrow(plants_mat[,1])){
+    if(plants_max[i]== 4){
+      plant_return[i,] = plant_weighting(plants_mat[i,], w1 = w1, w2 = w2, w3 = w3, w4 = w4)
+    } else if(plants_max[i]== 3){
+      plant_return[i,] = plant_weighting(plants_mat[i,], w1 = w2, w2 = w3, w3 = w4, w4 = w4)
+    } else if(plants_max[i]== 2){
+      plant_return[i,] = plant_weighting(plants_mat[i,], w1 = w3, w2 = w4, w3 = w4, w4 = w4)
+    } else{
+      plant_return[i,] = plant_weighting(plants_mat[i,])
+    }
+   }
+  
+  plants_rel <- decostand(plant_return, method = "total")
+  plants_dist <- vegdist(plants_rel, method = method)
+  return(plants_dist)
+}
 
-
-
-#load("260406_1001.Rdata")
-
-# scrutinize distribution of maximum abundance in plant data set ----------
-
+plant_dist_second <- max_weigthing(plants_mat=plants_second_round)
+hdbscan_complete(plant_dist_second, grunddat = grunddat_second_round,coarse = TRUE, bund = FALSE, kstop = 13)
 
 # maybe two cluster runs, one to get the distinct plots (the ones with a max abundance of 4) and one to seperate the remaining, in this 
 # case cluster number 13
+
+hdbscan_complete(plants_dist = max_weigthing(data_list[["forest_without_AG&plots_only_one"]][[1]]),
+                 grunddat = data_list[["forest_without_AG&plots_only_one"]][[2]], coarse = TRUE, bund = FALSE, by = 1)
 

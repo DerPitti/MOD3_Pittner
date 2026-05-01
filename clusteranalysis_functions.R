@@ -12,7 +12,7 @@ plant_weighting <- function(plant_data, w1 = 0.01, w2 = 0.01, w3 = 0.01, w4 = 1)
   plants_weighted[plants_weighted == 2] <- w2 # 0.05
   plants_weighted[plants_weighted == 3] <- w3 # 0.25
   plants_weighted[plants_weighted == 4] <- w4 # 0.75
-  plants_weighted[plants_weighted == 9] <- w1 # 0.01, 9 means somehow seldom
+  plants_weighted[plants_weighted == 9] <- w4 # 0.01, 9 means somehow seldom
   return(plants_weighted)
 }
 
@@ -87,14 +87,14 @@ clusterVScode <- function(plants_dist, pts, grunddat, bund = TRUE){
   }
 }
 
-hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse = FALSE, print = TRUE){
-  values <- data.frame(k = seq(3, 20,by = by),
-                       clusters = rep(0, length(seq(3, 20,by = by))),
-                       noise = rep(0, length(seq(3, 20,by = by))),
-                      ari = rep(0, length(seq(3, 20,by = by))),
-                       purity = rep(0, length(seq(3, 20,by = by))))
+hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse = FALSE, print = TRUE, kstop = 20){
+  values <- data.frame(k = seq(3, kstop,by = by),
+                       clusters = rep(0, length(seq(3, kstop,by = by))),
+                       noise = rep(0, length(seq(3, kstop,by = by))),
+                      ari = rep(0, length(seq(3, kstop,by = by))),
+                       purity = rep(0, length(seq(3, kstop,by = by))))
   
-  for (k in seq(3, 20,by = by)) {
+  for (k in seq(3, kstop,by = by)) {
     h <- hdbscan(plants_dist, minPts = k)
     if(print == TRUE){
       cat("minPts =", k, "-> clusters:", length(unique(h$cluster)), 
@@ -122,10 +122,16 @@ hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse 
 }
 
 # check outlier from hdbscan
+# ordination_outlier_func <- function(ord_data){
+#   return(which(is.finite(ord_data$points[,1]) & 
+#           abs(scale(ord_data$points[,1])) > 3 |
+#           abs(scale(ord_data$points[,2])) > 3))
+# }
+
 ordination_outlier_func <- function(ord_data){
-  return(which(is.finite(ord_data$points[,1]) & 
-          abs(scale(ord_data$points[,1])) > 3 |
-          abs(scale(ord_data$points[,2])) > 3))
+  return(which(is.finite(ord_data[,1]) & 
+                 abs(scale(ord_data[,1])) > 3 |
+                 abs(scale(ord_data[,2])) > 3))
 }
 
 # evaluate hdbscan graphically
