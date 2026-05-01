@@ -14,6 +14,8 @@ library(plotly)
 library(geometry)
 library(cluster)
 library(factoextra)
+library(uwot)
+library(rnndescent)
 
 plan(multisession, workers = parallel::detectCores() - 5)
 
@@ -340,15 +342,6 @@ for(i in 1: length(scenario_names)){
 # first PAM
 ks <- 2:25
 
-pam_sil_list <- list()
-# for(i in plant_comp_dist){
-#   sil_width <- sapply(ks, function(k) {
-#     pam_fit <- pam(i, k, diss = TRUE)
-#     pam_fit$silinfo$avg.width
-#   })
-#   pam_sil_list[[names(plant_comp_dist)[i]]]
-#   
-# }
 
 # https://j-sephb-lt-n.github.io/exploring_statistics/PAMS_and_SILHOUETTE_by_hand.html
 
@@ -371,16 +364,6 @@ pam_results <- future_lapply(names(plant_comp_dist), function(name) {
 
 names(pam_results) <- names(plant_comp_dist)
 
-# pam_sil_df <- dplyr::bind_rows(pam_sil_list)
-# pam_sil_df %>%
-#   group_by(dataset)%>%
-#   slice_max(order_by = sil_width, n = 1, with_ties = FALSE) %>%
-#   ungroup()
-# 
-# ggplot(pam_sil_df, aes(x = k, y = sil_width, col = dataset))+
-#   geom_line()+
-#   theme_classic()+
-#   labs(y = "Avg silhouette")
 
 # evaluate with metrics
 pam_evaluation <- evaluate_pam_models(pam_results, data_list_comp)
@@ -394,6 +377,22 @@ ggplot(pam_evaluation_plot)+
   facet_wrap(facets = "metric")
 # dev.off()
 
+pam_sil_df <- dplyr::bind_rows(pam_sil_list)
+pam_best <- pam_sil_df %>%
+  group_by(dataset)%>%
+  slice_max(order_by = sil_width, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+ggplot(pam_sil_df, aes(x = k, y = sil_width, col = dataset))+
+  geom_line()+
+  theme_classic()+
+  labs(y = "Avg silhouette")
+
+pam_best_models <- lapply(pam_best$dataset, function(x){
+  dist_mat <- plant_comp_dist[[x]]
+  k = pam_best$k[pam_best$dataset== x]
+  pam_model <- cluster::pam(dist_mat, k, diss = TRUE)
+})
 
 # GMM ---------------------------------------------------------------------
 
@@ -645,9 +644,6 @@ ggplot(as.data.frame(table(hdbscan_plot$cluster, grunddat_temp$`BT_Land_group`))
 
 # UMAP --------------------------------------------------------------------
 
-library(uwot)
-library(rnndescent)
-
 dist_mat <- plant_weighting(data_list[["forest_AG_c(0,1)"]][[1]])
 dist_mat <- decostand(dist_mat, method = "total")
 
@@ -672,6 +668,39 @@ ggplot(as.data.frame(table(umap_hdbscan$cluster, grunddat_temp$`BT_Land_group`))
   theme_minimal()
 
 ### umap with the right setting allows to decrease the noise fraction in return for lower ari
+
+
+# UMAP visualisation ------------------------------------------------------
+
+# firstly, forest_AG_c(0,1) since all three algorithms produced somehow usable results
+
+plant_mat <- plant_weighting(data_list[["forest_AG_c(0,1)"]][[1]])
+rel_mat <- decostand(plant_mat, method = "total")
+umap_2d <- umap(
+  rel_mat,
+  metric = "braycurtis",
+  nn_method = "nndescent",
+  n_neighbors = 10,
+  n_components = 2,
+  min_dist = 0.15
+)
+
+umap_2d_df <- as.data.frame(umap_2d)
+colnames(umap_2d_df) <- c("UMAP1", "UMAP2")
+
+
+umap_2d_df$pam <- as.factor(pam_best_models[[1]]$clustering)
+umap_2d_df$gmm <- as.factor(gmm_results[["forest_AG_c(0,1)"]]$classification)
+umap_2d_df$hdbscan <- as.factor(hdbscan_list[["forest_AG_c(0,1)"]][[1]][[5]]$cluster)
+
+umap_2d_long <- pivot_longer(umap_2d_df, cols = -c("UMAP1", "UMAP2"), names_to = "algorithm", values_to = "cluster")
+
+#png("results/umap_3_algorithms.png", width = 3000, height = 2100, res = 300)
+ggplot(umap_2d_long, aes(x = UMAP1, y = UMAP2, colour = cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_classic()+
+  facet_wrap(facets = "algorithm")
+#dev.off()
 
 # second cluster round -------------------------------------------------
 
@@ -726,11 +755,4 @@ pam_eval <- hdbscan_mismatch_evaluation(plants_nmds = nmds_object_imbalanced_wAG
 
 sum(pam_eval$mismatch) # not fitting into the cluster
 sum(pam_eval$mismatch==FALSE)
-
-adjustedRandIndex(pam_model$clustering, wone_wAG$BT_Land_group)
-cl_agreement(
-  as.cl_partition(pam_model$clustering),
-  as.cl_partition(wone_wAG$BT_Land_group),
-  method = "purity"
-)
 
