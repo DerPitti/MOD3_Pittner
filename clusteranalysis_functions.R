@@ -16,6 +16,40 @@ plant_weighting <- function(plant_data, w1 = 0.01, w2 = 0.01, w3 = 0.01, w4 = 1)
   return(plants_weighted)
 }
 
+###
+combine_list_to_df <- function(lst) {
+result <- dplyr::bind_rows(
+  lapply(names(lst), function(name) {
+    df <- lst[[name]]
+    df$list_name <- name
+    df
+    
+  })
+)
+return(result)
+}
+###
+
+max_weighting <- function(plants_mat, w1 = 0.01, w2 = 0.01, w3 = 0.01, w4 = 1, method = "bray"){
+  plant_return <- plants_mat[-1]
+  plants_max <- apply(plants_mat[,-1], 1, max)
+  for(i in 1:nrow(plants_mat[,1])){
+    if(plants_max[i]== 4){
+      plant_return[i,] = plant_weighting(plants_mat[i,], w1 = w1, w2 = w2, w3 = w3, w4 = w4)
+    } else if(plants_max[i]== 3){
+      plant_return[i,] = plant_weighting(plants_mat[i,], w1 = w2, w2 = w3, w3 = w4, w4 = w4)
+    } else if(plants_max[i]== 2){
+      plant_return[i,] = plant_weighting(plants_mat[i,], w1 = w3, w2 = w4, w3 = w4, w4 = w4)
+    } else{
+      plant_return[i,] = plant_weighting(plants_mat[i,])
+    }
+  }
+  
+  plants_rel <- decostand(plant_return, method = "total")
+  plants_dist <- vegdist(plants_rel, method = method)
+  return(plants_dist)
+}
+
 # relative abundances and euclidean distance
 weight_rel_dist <- function(plants_data,w1 = 0.01,w2 = 0.01,w3 = 0.01, w4 = 1, method = "bray"){
   plants_weighted <- plant_weighting(plants_data, w1,w2,w3,w4)
@@ -60,6 +94,23 @@ remove_land_biotope_code <- function(plant_data, grunddat, codes = c("AG")){
 }
 
 # hdbscan -----------------------------------------------------------------
+
+# transform evaluation metrics of hdbscan loop into a dataframe with columns indicating the data set used and the weigthing scheme applied
+hdbscan_result_df <- function(hdbscan_list, main_list){
+  result_df <- bind_rows(lapply(names(hdbscan_list), function(main_name) {
+    sublist <- hdbscan_list[[main_name]]
+    n_total <- nrow(main_list[[main_name]][[1]])  
+    bind_rows(lapply(seq_along(sublist), function(sub_id) {
+      df <- sublist[[sub_id]]
+      df %>%
+        mutate(
+          list_name = main_name,
+          sublist_id = sub_id,
+          noise_prop = noise/n_total
+        )
+    }))
+  }))
+  return(result_df)}
 
 
 # run hdbscan with increasing minPts
@@ -119,6 +170,54 @@ hdbscan_complete <- function(plants_dist, by = 2, grunddat, bund = TRUE, coarse 
     values[values$k == k,5] <- purity
   }
   return(values)
+}
+
+
+hdbscan_metrics <- function(hdbscan_objects, grunddat){
+  grunddat_short <- grunddat[,c(2,4,24,25)]
+  kstop = length(hdbscan_objects)+2
+  final <- data.frame(k = seq(3, kstop),
+                      clusters = rep(0, length(seq(3, kstop))),
+                      noise = rep(0, length(seq(3, kstop))),
+                      noise_prop = rep(0, length(seq(3, kstop))))
+  for (h in 1:length(hdbscan_objects)) {
+    final[final$k == h+2,2] <- length(unique(hdbscan_objects[[h]]$cluster))
+    final[final$k == h+2,3] <- sum(hdbscan_objects[[h]]$cluster == 0)
+    final[final$k == h+2,4] <- sum(hdbscan_objects[[h]]$cluster == 0)/length(hdbscan_objects[[h]]$cluster)}
+  for(o in 1:4){
+    values <- data.frame(ari = rep(0, length(seq(3, kstop))),
+                         purity = rep(0, length(seq(3, kstop))),
+                         ari_all = rep(0, length(seq(3, kstop))),
+                         purity_all = rep(0, length(seq(3, kstop))))
+    
+    for (h in 1:length(hdbscan_objects)) {
+      #table(h$cluster)
+      valid <- hdbscan_objects[[h]]$cluster != 0
+      clusters_hdb <- hdbscan_objects[[h]]$cluster[valid]
+      labels_bt   <- as.vector(grunddat_short[valid, o][[1]]) # check structure!!!
+      
+      ari <- adjustedRandIndex(clusters_hdb, labels_bt)
+      values[final$k == h+2,1] <- ari  # change format
+      purity <- cl_agreement(as.cl_partition(clusters_hdb),
+                             as.cl_partition(labels_bt),
+                             method = "purity")
+      values[final$k == h+2,2] <- purity
+      ## all
+      clusters_all <- hdbscan_objects[[h]]$cluster
+      labels_bt_all   <- as.vector(grunddat_short[, o][[1]]) # check structure!!!
+      
+      ari <- adjustedRandIndex(clusters_all, labels_bt_all)
+      values[final$k == h+2,3] <- ari  # change format
+      purity <- cl_agreement(as.cl_partition(clusters_all),
+                             as.cl_partition(labels_bt_all),
+                             method = "purity")
+      values[final$k == h+2,4] <- purity
+    }
+    names(values) <- paste0(names(grunddat_short)[[o]],"_", names(values))
+    final <- cbind(final, values)
+  }
+  
+  return(final)
 }
 
 # check outlier from hdbscan
@@ -288,4 +387,50 @@ evaluate_gmm <- function(gmm_list){
   }
   return(list(tab_plot = mclust_tabs_total, ari_values =ari_values,
               bic = bic_values, uncertainty = uncertainty_values))
+}
+
+
+# PAM ---------------------------------------------------------------------
+
+# pam evaluation function
+evaluate_pam_models <- function(pam_list, grunddat_list) {
+  results <- lapply(names(pam_list), function(dataset_name) {
+    pam_models <- pam_list[[dataset_name]]
+    labels <- grunddat_list[[dataset_name]][[2]]["Biotoptyp-Land"][[1]]
+    labels_group <- grunddat_list[[dataset_name]][[2]]["BT_Land_group"][[1]]
+    
+    df <- lapply(seq_along(pam_models), function(i) {
+      
+      pam_model <- pam_models[[i]]
+      clusters <- pam_model$clustering
+      
+      ari <- mclust::adjustedRandIndex(clusters, labels)
+      purity <- clue::cl_agreement(
+        clue::as.cl_partition(clusters),
+        clue::as.cl_partition(labels),
+        method = "purity"
+      )
+      ari_group <- mclust::adjustedRandIndex(clusters, labels_group)
+      purity_group <- clue::cl_agreement(
+        clue::as.cl_partition(clusters),
+        clue::as.cl_partition(labels_group),
+        method = "purity"
+      )
+      
+      data.frame(
+        dataset = dataset_name,
+        k = length(unique(clusters)),
+        ari = ari,
+        purity = purity,
+        ari_group = ari_group,
+        purity_group = purity_group,
+        combined = 0.5*ari+0.5*purity,
+        combined_group = 0.5*ari_group+0.5* purity_group
+      )
+    })
+    
+    dplyr::bind_rows(df)
+  })
+  
+  dplyr::bind_rows(results)
 }
