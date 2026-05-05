@@ -471,3 +471,85 @@ evaluate_pam_models <- function(pam_list, grunddat_list) {
   
   dplyr::bind_rows(results)
 }
+#### combine metrics
+
+transfer_purity <- function(combined_evaluation_df,
+                            results_df,
+                            scenario_df,
+                            algorithm = "hdbscan") {
+  
+  if(algorithm == "hdbscan"){
+    # Align column names
+    scenario_prepared <- scenario_df %>%
+      rename(
+        k = best_k
+      )
+    
+    # Keep only relevant rows from metrics
+    filtered_metrics <- results_df %>%
+      inner_join(
+        scenario_prepared,
+        by = c("list_name", "balance", "k")
+      ) %>%
+      select(
+        list_name,
+        k,
+        clusters,
+        noise,
+        `Biotoptyp-Land_purity`,
+        `Biotoptyp-Land_purity_all`,
+        `BT_Land_group_purity`,
+        `BT_Land_group_purity_all`,
+        `BT_Land_group_ari_all`
+      )%>%
+      mutate(combined_group = 0.5*`BT_Land_group_purity_all`+0.5*`BT_Land_group_ari_all`)
+    # Join into your evaluation df
+    result <- combined_evaluation_df %>%
+      left_join(
+        filtered_metrics, #filtered_metrics[,-7],
+        by = c("dataset" = "list_name")
+      )
+  } else if (algorithm == "pam"){
+    # Align column names
+    scenario_prepared <- scenario_df
+    
+    # Keep only relevant rows from metrics
+    filtered_metrics <- results_df %>%
+      inner_join(
+        scenario_prepared,
+        by = c("dataset", "k")
+      ) %>%
+      select(
+        dataset,
+        k,
+        `purity`,
+        `purity_group`,
+        combined_group
+      )
+    # Join into your evaluation df
+    result <- combined_evaluation_df %>%
+      left_join(
+        filtered_metrics,
+        by = c("dataset" = "dataset"),
+        suffix = c("_hdbscan", "_pam")
+      )} else{
+        
+        # Keep only relevant rows from metrics
+        filtered_metrics <- results_df %>%
+          select(
+            dataset,
+            cluster,
+            `purity`,
+            `purity_group`,
+            combined_group
+          )
+        # Join into your evaluation df
+        result <- combined_evaluation_df %>%
+          left_join(
+            filtered_metrics,
+            by = c("dataset" = "dataset")
+          )
+      }
+  
+  return(result)
+}
