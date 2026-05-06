@@ -17,65 +17,69 @@ library(factoextra)
 library(uwot)
 library(rnndescent)
 library(ggrepel)
+library(RColorBrewer)
+library(colorspace)
+library(gridExtra)
+library(paletteer)
 
 plan(multisession, workers = parallel::detectCores() - 2)
 
 source("clusteranalysis_functions.R")
 
-# grunddaten <- read_xlsx("data/tbl_grunddaten.xlsx") # load basic data for each plot, e.g. biotopcodes
-# plants <- read_xlsx("data/tbl_daten_pflanzen.xlsx") # load plant data
-# life_forms <- read_xlsx("data/Life_form.xlsx") # load life form data https://floraveg.eu/download/
-# 
-# # group biotope codes
-# grunddaten$BT_Bund_group <- substr(grunddaten$`Biotoptyp-Bund`,1,5)
-# grunddaten$BT_Land_group <- substr(grunddaten$`Biotoptyp-Land`,1,2)
-# 
-# 
-# # Removal of data sets with non-meaningful plant composition --------------
-# 
-# remove_polygons <- filter(grunddaten, substr(`Biotoptyp-Land`,1,1) %in% c("F", "V", "W")) # maybe G and H as well
-# # check that every plot has plants
-# remove_polygons2 <- filter(grunddaten, !Polygon %in% plants$Polygon & !substr(`Biotoptyp-Land`,1,1) %in% c("F", "V", "W"))
-# 
-# remove_poly <- rbind(remove_polygons, remove_polygons2)
-# plants_sub <- filter(plants, !Polygon %in% remove_poly$Polygon)
-# grunddaten_sub <- filter(grunddaten, !Polygon %in% remove_poly$Polygon)
-# 
-# # transformation of plant data frame
-# 
-# # remove duplicate rows
-# plants_clean <- plants_sub %>%
-#   dplyr::distinct(Polygon, `Wissenschaftlicher Name`, Menge, .keep_all = TRUE)
-# 
-# # only keep row with highest abundance
-# plants_clean2 <- plants_clean %>%
-#   dplyr::arrange(Polygon, `Wissenschaftlicher Name`, desc(Menge)) %>%
-#   dplyr::distinct(Polygon, `Wissenschaftlicher Name`, .keep_all = TRUE
-#   )
-# 
-# plants_clean2$Menge <- as.numeric(plants_clean2$Menge) # transform abundances to numeric
-# 
-# 
-# ### find outlier plots
-# 
-# # 01728 will be removed, because only one plant found, and in 04567, Ulmus spec. will be specified to Ulmus glabra accordingly to Beschreibung
-# plants_clean2 <- plants_clean2 %>%
-#   filter(Polygon != "01728") %>%
-#   mutate(`Wissenschaftlicher Name` = if_else(`Wissenschaftlicher Name`=="Ulmus spec.", "Ulmus glabra", `Wissenschaftlicher Name`))
-# 
-# plants_wide <- plant_widening(plants_clean2)
-# 
-# grunddaten_sub <- grunddaten_sub %>% # remove 01728 also from grunddaten
-#   filter(Polygon != "01728")
-# 
-# # Separation of biotope types ---------------------------------------------
-# 
-# grunddaten_grass <- filter(grunddaten_sub, substr(`Biotoptyp-Land`,1,1) %in% c("E"))
-# plants_grass <- filter(plants_wide, Polygon %in% grunddaten_grass$Polygon)
-# 
-# grunddaten_forests <- filter(grunddaten_sub, substr(`Biotoptyp-Land`,1,1) %in% c("A"))
-# plants_forests <- filter(plants_wide, Polygon %in% grunddaten_forests$Polygon)
-# 
+grunddaten <- read_xlsx("data/tbl_grunddaten.xlsx") # load basic data for each plot, e.g. biotopcodes
+plants <- read_xlsx("data/tbl_daten_pflanzen.xlsx") # load plant data
+life_forms <- read_xlsx("data/Life_form.xlsx") # load life form data https://floraveg.eu/download/
+
+# group biotope codes
+grunddaten$BT_Bund_group <- substr(grunddaten$`Biotoptyp-Bund`,1,5)
+grunddaten$BT_Land_group <- substr(grunddaten$`Biotoptyp-Land`,1,2)
+
+
+# Removal of data sets with non-meaningful plant composition --------------
+
+remove_polygons <- filter(grunddaten, substr(`Biotoptyp-Land`,1,1) %in% c("F", "V", "W")) # maybe G and H as well
+# check that every plot has plants
+remove_polygons2 <- filter(grunddaten, !Polygon %in% plants$Polygon & !substr(`Biotoptyp-Land`,1,1) %in% c("F", "V", "W"))
+
+remove_poly <- rbind(remove_polygons, remove_polygons2)
+plants_sub <- filter(plants, !Polygon %in% remove_poly$Polygon)
+grunddaten_sub <- filter(grunddaten, !Polygon %in% remove_poly$Polygon)
+
+# transformation of plant data frame
+
+# remove duplicate rows
+plants_clean <- plants_sub %>%
+  dplyr::distinct(Polygon, `Wissenschaftlicher Name`, Menge, .keep_all = TRUE)
+
+# only keep row with highest abundance
+plants_clean2 <- plants_clean %>%
+  dplyr::arrange(Polygon, `Wissenschaftlicher Name`, desc(Menge)) %>%
+  dplyr::distinct(Polygon, `Wissenschaftlicher Name`, .keep_all = TRUE
+  )
+
+plants_clean2$Menge <- as.numeric(plants_clean2$Menge) # transform abundances to numeric
+
+
+### find outlier plots
+
+# 01728 will be removed, because only one plant found, and in 04567, Ulmus spec. will be specified to Ulmus glabra accordingly to Beschreibung
+plants_clean2 <- plants_clean2 %>%
+  filter(Polygon != "01728") %>%
+  mutate(`Wissenschaftlicher Name` = if_else(`Wissenschaftlicher Name`=="Ulmus spec.", "Ulmus glabra", `Wissenschaftlicher Name`))
+
+plants_wide <- plant_widening(plants_clean2)
+
+grunddaten_sub <- grunddaten_sub %>% # remove 01728 also from grunddaten
+  filter(Polygon != "01728")
+
+# Separation of biotope types ---------------------------------------------
+
+grunddaten_grass <- filter(grunddaten_sub, substr(`Biotoptyp-Land`,1,1) %in% c("E"))
+plants_grass <- filter(plants_wide, Polygon %in% grunddaten_grass$Polygon)
+
+grunddaten_forests <- filter(grunddaten_sub, substr(`Biotoptyp-Land`,1,1) %in% c("A"))
+plants_forests <- filter(plants_wide, Polygon %in% grunddaten_forests$Polygon)
+
 # # further reduction of forest data ---------------------------------------------
 # 
 # # remove "AT... and "AU..."
@@ -1097,4 +1101,325 @@ sum(pam_eval$mismatch==FALSE)
 
 # figure 1 ----------------------------------------------------------------
 
-hist(x = grunddaten_forest)
+sil <- silhouette(pam_results[["trees_AG&_c(0)"]][["9"]]$clustering, plant_comp_dist[["trees_AG&_c(0)"]])
+
+sil_df <- as.data.frame(sil)
+sil_df <- sil_df %>%
+  group_by(cluster) %>%
+  arrange(desc(sil_width)) %>%
+  mutate(order = row_number())
+ggplot(sil_df, aes(x = factor(cluster), y = sil_width, fill = factor(cluster))) +
+  geom_violin() +
+  geom_boxplot(width = 0.1, outlier.size = 0.5) +
+  theme_minimal()
+
+sil_summary <- sil_df %>%
+  group_by(cluster) %>%
+  summarise(
+    mean_sil = mean(sil_width),
+    median_sil = median(sil_width),
+    n = n()
+  )
+ggplot(sil_summary, aes(x = factor(cluster), y = mean_sil)) +
+  geom_col() +
+  theme_minimal()
+####
+
+plant_mat <- plant_comp_gmm[["trees_AG&_c(0)"]]
+pam_visual <- umap(
+  plant_mat,
+  metric = "braycurtis",
+  nn_method = "nndescent",
+  n_neighbors = 15,
+  n_components = 2,
+  min_dist = 1.5
+)
+pam_visual <- as.data.frame(pam_visual)
+colnames(pam_visual) <- c("UMAP1", "UMAP2")
+
+#pam_visual <- visualisation_3plots_umap[["trees_AG&_c(0)"]]
+pam_fit_visual <- pam_best_models[["trees_AG&_c(0)"]]
+#pam_results[["trees_AG&_c(0)"]][["9"]]$clustering == pam_fit_visual$clustering
+pam_visual$cluster <- pam_fit_visual$clustering
+pam_visual$group <- data_list_comp[["trees_AG&_c(0)"]][[2]]$BT_Land_group
+
+hull_pam <- pam_visual %>%
+  group_by(cluster) %>%   # cluster must exist in your data
+  slice(chull(UMAP1, UMAP2))
+legend_df <- pam_visual[pam_fit_visual$id.med,c(3,4)]
+legend_df <- left_join(legend_df,round(sil_summary,2), by = "cluster")
+legend_df <- rbind(c("cluster", "group", "sil", "median_sil", "n"), legend_df)
+
+legend_df$row <- 1:10
+legend_df$x <- max(pam_visual$UMAP1)-10
+legend_df$y <- max(pam_visual$UMAP2)+5
+legend_df$x2 <- legend_df$x + 5
+legend_df$x3 <- legend_df$x + 10
+
+legend_df$y <- legend_df$y - legend_df$row * 2
+
+groups <- unique(pam_visual$group)
+group_colors <- setNames( paletteer_d("ggthemes::Hue_Circle", n = length(groups), direction = -1),
+                          nm = groups[sample(1:length(groups), length(groups), replace=FALSE)] # prevent that biotope groups which are directly besides
+) # each other, get a similar colour group
+
+#png("results/PAM_medoids_legend.png", width = 1500, height = 1050, res = 150)
+ggplot(pam_visual)+
+  geom_point(aes(x = UMAP1, y = UMAP2, colour = group))+
+  geom_polygon(
+    data = hull_pam,
+    aes(x = UMAP1, y = UMAP2, group = cluster),
+    fill = NA,
+    colour = "black",
+    linewidth = 0.7
+  ) +
+  geom_point(data=pam_visual[pam_fit_visual$id.med,], aes(x = UMAP1, y = UMAP2),
+             colour = "black",size=4.5)+
+  geom_point(data=pam_visual[pam_fit_visual$id.med,], aes(x = UMAP1, y = UMAP2, colour = group),
+             size=2,show.legend = FALSE  )+
+  geom_text(data=pam_visual[pam_fit_visual$id.med,],
+            aes(x = UMAP1+1.5, y = UMAP2,
+              label = pam_visual$cluster[pam_fit_visual$id.med]),
+             size=4.5, show.legend = FALSE)+
+  geom_text(
+    data = legend_df[-1,],
+    aes(x = x, y = y, label = paste0(cluster,": ", group)),
+    hjust = 0,
+    size = 4
+  )+
+  geom_text(
+    data = legend_df,
+    aes(x = x2, y = y, label = mean_sil),
+    hjust = 0,
+    size = 4
+  )+
+  geom_text(
+    data = legend_df,
+    aes(x = x3, y = y, label = n),
+    hjust = 0,
+    size = 4
+  )+
+  theme_classic()+
+  scale_colour_manual(values = group_colors,name = "Code group")+
+  #scale_color_discrete(name = "Code group")+
+  labs(title = "PAM-trees without AG")
+#dev.off()
+
+pam_sil_plot <- ggplot(legend_df[-1,], aes(x= cluster))+
+  geom_col(data = legend_df[-1,],aes(y = as.numeric(mean_sil), fill = group))+
+  geom_point(aes(y = as.numeric(n)/1000), shape = 15)+
+  scale_y_continuous(name = "mean silhouette",sec.axis = sec_axis(~ .*1000, name = "number of points"))+
+  scale_fill_manual(values = group_colors,name = "Code group")+
+  theme_classic()
+
+tab_tree <- table(hdbscan_list[["forest_AG_c(0,1)"]][[1]][[11]]$cluster, data_list_comp[["forest_AG_c(0,1)"]][[2]]$BT_Land_group)
+dominant <- apply(tab_tree, 1, function(x) names(which.max(x)))
+
+legend_labels <- data.frame(cluster = 0:(length(dominant)-1),
+                            label = dominant)
+legend_labels$combined <- paste0(legend_labels$cluster, ": ",legend_labels$label)
+png("results/HDBSCAN_tree_forest_AG_c(0,1).png", width = 1500, height = 1050, res = 150)
+plot(hdbscan_list[["forest_AG_c(0,1)"]][[1]][[11]], show_flat = TRUE,
+     main = "HDBSCAN tree - forest_AG_c(0,1)")
+legend("topright",
+       legend = legend_labels$combined,
+       ncol = 3,
+       title="Main biotope group per cluster")
+dev.off()
+
+### Figure 3 -exploration
+# membership probability to cluster against label
+for(i in scenario_names){
+  cluster_label_plot <- data.frame(
+    cluster = hdbscan_list[[i]][[scenario_df$balance_scenario[scenario_df$list_name == i]]][[(scenario_df$best_k[scenario_df$list_name == i])-2]]$cluster,
+                                   #label = data_list_comp[[i]][[2]]$BT_Land_group,
+                                    label = data_list_comp[[i]][[2]]$`Biotoptyp-Land`,
+                                   prop = hdbscan_list[[i]][[1]][[11]]$membership_prob)
+  cluster_label_plot_tab <- as.data.frame(table(cluster_label_plot$cluster, cluster_label_plot$label))
+  cluster_label_plot_tab <- as.data.frame(table(cluster_label_plot$label,cluster_label_plot$cluster))
+  g <- ggplot(cluster_label_plot_tab,
+         aes(Var2, Freq, colour = Var1, fill = Var1)) +
+    geom_bar(stat = "identity", colour = "black")+
+    theme_minimal()
+  print(g)
+}
+
+
+
+cluster_label_plot_tab <- as.data.frame(table(pam_best_models[["trees_AG&_c(0)"]]$clustering,
+                                              data_list_comp[["trees_AG&_c(0)"]][[2]]$BT_Land_group))
+cluster_label_plot_tab <- as.data.frame(table(data_list_comp[["trees_AG&_c(0)"]][[2]]$BT_Land_group,
+                                              pam_best_models[["trees_AG&_c(0)"]]$clustering))
+
+### PAM
+for(i in scenario_names){
+  cluster_label_plot <- data.frame(
+    cluster = pam_best_models[[i]]$clustering,
+    label = data_list_comp[[i]][[2]]$BT_Land_group,
+    prop = hdbscan_list[[i]][[1]][[11]]$membership_prob)
+  cluster_label_plot_tab <- as.data.frame(table(cluster_label_plot$cluster, cluster_label_plot$label))
+  cluster_label_plot_tab <- as.data.frame(table(cluster_label_plot$label,cluster_label_plot$cluster))
+  g <- ggplot(cluster_label_plot_tab,
+              aes(Var2, Freq, colour = Var1, fill = Var1)) +
+    geom_bar(stat = "identity")+
+    theme_minimal()
+  print(g)
+}
+
+
+#Figure 3
+cluster_label_plot_tab <- as.data.frame(table(data_list_comp[["trees_AG_c(0,1)"]][[2]]$BT_Land_group,
+                                        hdbscan_list[["trees_AG_c(0,1)"]][[2]][[3]]$cluster))
+cluster_label_plot_tab_red <- cluster_label_plot_tab%>%
+  group_by(Var2)%>%
+  summarise(n_points = sum(Freq), .groups = "drop")%>%
+  filter(n_points>12)
+names(cluster_label_plot_tab) <- c("biotope code", "cluster", "frequency")
+
+# colour
+
+
+groups <- unique(cluster_label_plot_tab$`biotope code`)
+group_colors <- setNames( paletteer_d("ggthemes::Tableau_20", n = length(groups), direction = -1),
+  nm = groups[sample(1:length(groups), length(groups), replace=FALSE)] # prevent that biotope groups which are directly besides
+) # each other, get a similar colour group
+
+
+generate_shades <- function(base_color, n) {
+  lighten_vals <- seq(0.01, 0.6, length.out = n)
+  colorspace::lighten(base_color, lighten_vals)
+}
+
+g1 <- ggplot(cluster_label_plot_tab[cluster_label_plot_tab$cluster %in% cluster_label_plot_tab_red$Var2,],
+       aes(x = cluster,y = frequency, fill = `biotope code`)) +
+ geom_bar(stat = "identity")+
+  theme_minimal()+
+  theme_minimal()+
+  theme(legend.position = "top",legend.text = element_text(margin = margin(l = 0)),
+        legend.title = element_text(hjust = 0),axis.title.x = element_blank(),
+        axis.text.x  = element_blank(),
+        axis.ticks.x = element_blank())+
+  guides(fill = guide_legend(nrow = 1))+
+  scale_fill_manual(values = group_colors)
+
+# g1 <- g1+theme(axis.title.x = element_blank(),
+#                axis.text.x  = element_blank(),
+#                axis.ticks.x = element_blank())
+
+cluster_label_plot_code <- as.data.frame(table(data_list_comp[["trees_AG_c(0,1)"]][[2]]$`Biotoptyp-Land`,
+                                              hdbscan_list[["trees_AG_c(0,1)"]][[2]][[3]]$cluster))
+
+cluster_label_prop <- cluster_label_plot_code %>%
+  group_by(Var2) %>%                     # per cluster
+  mutate(prop = Freq / sum(Freq) * 100) %>%
+  ungroup()
+names(cluster_label_prop) <- c("biotope code", "cluster", "frequency", "proportion")
+
+subgroups <- unique(cluster_label_prop$`biotope code`)
+subgroups_substr <- substr(subgroups, 1,2)
+subgroup_colors <- c()
+for(i in groups){
+  sub_cols <- subgroups[subgroups_substr==i]
+  col_temp <- setNames(generate_shades(group_colors[i], length(sub_cols)), sub_cols)
+  subgroup_colors <- c(subgroup_colors, col_temp)
+  
+}
+
+
+g2 <- ggplot(cluster_label_prop[cluster_label_prop$cluster %in% cluster_label_plot_tab_red$Var2,],
+       aes(cluster, proportion, fill = `biotope code`)) +
+  geom_bar(stat = "identity", color = "black", show.legend = FALSE)+
+  guides(fill = guide_legend(nrow = 5))+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  scale_fill_manual(values = subgroup_colors)
+
+
+#png("results/trees_AG_c(0,1)_prop_without_legends_own_col.png", width = 3000, height = 3000, res = 300)
+grid.arrange(g1, g2, ncol = 1, heights = c(1, 2))
+#dev.off()
+
+
+# test predict
+add_noise_ordinal <- function(X, p = 0.1) {
+  X <- as.matrix(X)
+  
+  dims <- dim(X)
+  
+  # probability of changing non-zero vs zero
+  p_nonzero <- p          # e.g. 0.1
+  p_zero    <- p * 0.2    # much smaller (tune this)
+  
+  # build mask depending on value
+  noise_mask <- matrix(FALSE, nrow = dims[1], ncol = dims[2])
+  
+  is_nonzero <- X > 0
+  is_zero    <- X == 0
+  
+  noise_mask[is_nonzero] <- runif(sum(is_nonzero)) < p_nonzero
+  noise_mask[is_zero]    <- runif(sum(is_zero)) < p_zero
+  
+  # shifts (still mostly no change)
+  shifts <- c(-1, 0, 1)
+  probs  <- c(0.3, 0.4, 0.3)
+  
+  shift_matrix <- matrix(
+    sample(shifts, length(X), replace = TRUE, prob = probs),
+    nrow = dims[1], ncol = dims[2]
+  )
+  
+  X_noisy <- X
+  X_noisy[noise_mask] <- X_noisy[noise_mask] + shift_matrix[noise_mask]
+  
+  X_noisy[X_noisy < 0] <- 0
+  X_noisy[X_noisy > 4] <- 4
+  
+  changes <- data.frame(
+    row = row(noise_mask)[noise_mask],
+    col = colnames(X)[col(noise_mask)[noise_mask]],
+    old = X[noise_mask],
+    new = X_noisy[noise_mask]
+  )
+  changes <- changes[changes$old != changes$new, ]
+  print(changes)
+  
+  return(X_noisy)
+}
+
+test_sample <- sample(1:nrow(data_list[["trees_AG_c(0,1)"]][[1]]),size=10)
+test_predict <- data_list[["trees_AG_c(0,1)"]][[1]][test_sample,]
+#test_predict_noise <- apply(test_predict[,-1],MARGIN =2, FUN=add_noise_ordinal)
+test_predict_noise <- add_noise_ordinal(test_predict[,-1])
+test_predict_noise <- as.data.frame(test_predict_noise)
+test_predict_noise_dist <- weight_rel_dist(test_predict_noise, ,w1 = 0.01, w2 = 0.05, w3 = 0.25, w4 = 0.9)
+predict(object=hdbscan_list[["trees_AG_c(0,1)"]][[2]][[3]], newdata = test_predict_noise,
+                data = data_list_comp[["trees_AG_c(0,1)"]][[1]][,-1])
+
+hdbscan_list[["trees_AG_c(0,1)"]][[2]][[3]]$cluster[test_sample]
+compare_plant <- data_list_comp[["trees_AG_c(0,1)"]][[1]][,-1][test_sample,]
+# Appendix figures --------------------------------------------------------
+
+
+hist_plot_land <- grunddaten_forests %>%
+  group_by(`Biotoptyp-Land`)%>%
+  summarise(anzahl = n())%>%
+  arrange(.,desc(anzahl))
+
+ggplot(hist_plot_land[1:30,])+
+  geom_point(aes(x=`Biotoptyp-Land`, y= anzahl))+
+  #scale_y_log10()+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 90))+
+  scale_x_discrete(limits = hist_plot_land[1:30,1][[1]])
+
+hist_plot_land_group <- grunddaten_forests %>%
+  group_by(`BT_Land_group`)%>%
+  summarise(anzahl = n())%>%
+  arrange(.,desc(anzahl))
+
+ggplot(hist_plot_land_group)+
+  geom_point(aes(x=`BT_Land_group`, y= anzahl))+
+  #scale_y_log10()+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 90))+
+  scale_x_discrete(limits = hist_plot_land_group[[1]])
