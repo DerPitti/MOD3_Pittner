@@ -1,0 +1,105 @@
+nur 20 häufigste Biotope
+halbautomatisches Clustern
+andere Umrechnung der Abundanz -> Anteil Biotope mit höchster Abundanzklasse = 3; Umrechnung von Klasse 9
+Berechnung von ARI und Purity in HDBSCAN auch in einer Version mit Clustergruppe Noise
+
+
+# GMM ---------------------------------------------------------------------
+
+
+
+grid <- expand.grid(
+  i = 1:2,
+  o = seq_along(data_list)
+)
+
+
+results <- future_lapply(seq_len(nrow(grid)), function(idx) {
+  i <- grid$i[idx]
+  o <- grid$o[idx]
+  
+  name <- names(data_list)[o]
+  plants <- data_list[[o]][[1]]
+  
+  plant_mat <- plant_weighting(
+    plants,
+    weighting[1,i], weighting[2,i],
+    weighting[3,i], weighting[4,i]
+  )
+  
+  plant_total <- decostand(plant_mat, method = "total")
+  plant_hell  <- decostand(plant_mat, method = "hellinger")
+  
+  # GMM
+  model_total <- Mclust(plant_total)
+  model_hell  <- Mclust(plant_hell)
+  
+  # PCA + GMM
+  pca_total <- prcomp(plant_total)
+  model_pca_total <- Mclust(pca_total$x[, 1:10])
+  
+  pca_hell <- prcomp(plant_hell)
+  model_pca_hell <- Mclust(pca_hell$x[, 1:10])
+  
+  list(
+    name = name,
+    i = i,
+    models_total = list(
+      raw = model_total,
+      pca = model_pca_total
+    ),
+    models_hell = list(
+      raw = model_hell,
+      pca = model_pca_hell
+    )
+  )
+}, future.seed = TRUE)
+
+#results <- readRDS("GMM_results_all_260406.Rds")
+
+gmm_models_total <- list()
+gmm_models_hellinger <- list()
+
+for (res in results) {
+  name <- res$name
+  i <- res$i
+  
+  if (is.null(gmm_models_total[[name]])) {
+    gmm_models_total[[name]] <- vector("list", 4)
+    gmm_models_hellinger[[name]] <- vector("list", 4)
+  }
+  
+  gmm_models_total[[name]][[i]]     <- res$models_total$raw
+  gmm_models_total[[name]][[i+2]]   <- res$models_total$pca
+  
+  gmm_models_hellinger[[name]][[i]]   <- res$models_hell$raw
+  gmm_models_hellinger[[name]][[i+2]] <- res$models_hell$pca
+}
+
+# visualize/evaluate results
+
+gmm_total_eval <- evaluate_gmm(gmm_models_total)
+
+for(i in gmm_total_eval$tab_plot){
+  print(ggplot(data = i, aes(x = Biotope, y = Cluster, fill = Freq)) +
+          geom_tile() +
+          scale_fill_gradient(low = "white", high = "blue") +
+          theme_minimal() +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+          facet_wrap(facet = "run")
+        )
+}
+for(i in gmm_total_eval$ari_values){
+  print(i)
+}
+
+gmm_hell_eval <- evaluate_gmm(gmm_models_hellinger)
+for(i in gmm_hell_eval$ari_values){
+  print(i)
+}
+for(i in gmm_hell_eval$bic){
+  print(i)
+}
+for(i in gmm_hell_eval$uncertainty){
+  print(i)
+}
