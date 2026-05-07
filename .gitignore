@@ -1,4 +1,5 @@
 *.txt
 *.RData
 *.RDataTmp
-*.pdf
+
+*.Rhistory

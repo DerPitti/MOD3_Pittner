@@ -170,22 +170,23 @@ for(i in 1: length(scenario_names)){
 ks <- 2:25 #number of medoids to test for PAM
 
 # run PAM over all medoids for each data set
-pam_results <- future_lapply(names(plant_comp_dist), function(name) {
-  dist_mat <- plant_comp_dist[[name]]
-  res <- lapply(ks, function(k) {
-    pam_fit <- pam(dist_mat, k, diss = TRUE)
-    list(
-      k = k,
-      sil_width = pam_fit$silinfo$avg.width,
-      clustering = pam_fit$clustering
-    )
-  })
-  names(res) <- ks
-  res
-}, future.seed = TRUE)
-
-names(pam_results) <- names(plant_comp_dist)
-
+# pam_results <- future_lapply(names(plant_comp_dist), function(name) {
+#   dist_mat <- plant_comp_dist[[name]]
+#   res <- lapply(ks, function(k) {
+#     pam_fit <- pam(dist_mat, k, diss = TRUE)
+#     list(
+#       k = k,
+#       sil_width = pam_fit$silinfo$avg.width,
+#       clustering = pam_fit$clustering
+#     )
+#   })
+#   names(res) <- ks
+#   res
+# }, future.seed = TRUE)
+# 
+# names(pam_results) <- names(plant_comp_dist)
+#saveRDS(pam_results, "results/PAM_results.RDS")
+pam_results <- readRDS("results/PAM_results.RDS")
 
 # evaluate PAM results with metrics
 pam_evaluation <- evaluate_pam_models(pam_results, data_list_comp)
