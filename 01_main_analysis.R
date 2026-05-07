@@ -25,7 +25,7 @@ library(ggnewscale)
 
 plan(multisession, workers = parallel::detectCores() - 2)
 
-source("clusteranalysis_functions.R")
+source("03_functions.R")
 
 # load data: a list of plant, basic data dataset pairs with increasing simplification
 data_list <- prepare_data()
@@ -42,7 +42,7 @@ data_list <- prepare_data()
 # }
 # 
 # saveRDS(hdbscan_list, "results/hdbscan_list.RDS")
-test_list <- readRDS("results/hdbscan_list.RDS")
+hdbscan_list <- readRDS("results/hdbscan_list.RDS")
 
 # calculation of metrics for all data sets and hdbscan runs
 hdbscan_metrics_all_imbalanced <- list()
@@ -235,18 +235,18 @@ names(pam_best_models) <- pam_best$dataset
 # GMM ---------------------------------------------------------------------
 
 # GMM does not need distance matrices, therefore only weigthing and normilization are applied
-# plant_comp_gmm <- list()
-# 
-# for(i in 1: length(scenario_names)){
-#   if(scenario_balance[i]== 2){
-#     dist_mat <- plant_weighting(data_list_comp[[i]][[1]],w1 = 0.01, w2 = 0.05, w3 = 0.25, w4 = 0.9)
-#   } else{
-#     dist_mat <- plant_weighting(data_list_comp[[i]][[1]],)
-#   }
-#   rel_mat <- decostand(dist_mat, method = "total")
-#   plant_comp_gmm[[names(data_list_comp)[i]]] <- dist_mat
-# }
-# 
+plant_comp_gmm <- list()
+
+for(i in 1: length(scenario_names)){
+  if(scenario_balance[i]== 2){
+    dist_mat <- plant_weighting(data_list_comp[[i]][[1]],w1 = 0.01, w2 = 0.05, w3 = 0.25, w4 = 0.9)
+  } else{
+    dist_mat <- plant_weighting(data_list_comp[[i]][[1]],)
+  }
+  rel_mat <- decostand(dist_mat, method = "total")
+  plant_comp_gmm[[names(data_list_comp)[i]]] <- dist_mat
+}
+
 # # calculation of GMM for each data set
 # gmm_results <- future_lapply(names(plant_comp_gmm), function(name) {
 #   rel_mat <- plant_comp_gmm[[name]]
@@ -366,6 +366,7 @@ names(visualisation_3plots_umap) <- names(plant_comp_gmm)
 #visualisation_3plots_nmds <- readRDS("results/visualisation_3plots_nmds.RDS") # whole object too large for github
 #saveRDS(visualisation_3plots_nmds[["forest_AG_c(0,1)"]], "results/visualisation_3plots_nmds_AG_c(0,1).RDS")
 
+visualisation_3plots_nmds <- list()
 visualisation_3plots_nmds[["forest_AG_c(0,1)"]] <- readRDS("results/visualisation_3plots_nmds_AG_c(0,1).RDS")
 
 dimesion_comparison <- data_list[["forest_AG_c(0,1)"]]
@@ -395,7 +396,7 @@ hdbscan_umap <- hdbscan(comparison_umap, minPts = 8)
 comparison_nmds <- readRDS("results/comparison_nmds.RDS")
 
 # using 5-dimensional NMDS data for HDBSCAN
-hdbscan_complete(comparison_nmds$points, by = 1, grunddat = dimesion_comparison[[2]], bund = FALSE)
+hdbscan_complete(comparison_nmds$points, by = 1, grunddat = dimesion_comparison[[2]], bund = FALSE, print = FALSE)
 hdbscan_nmds <- hdbscan(comparison_nmds$points, minPts = 8)
 # hdbscan_metrics(list(hdbscan_nmds),dimesion_comparison[[2]])
 

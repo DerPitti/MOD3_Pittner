@@ -13,7 +13,7 @@ library(clue)
 library(uwot)
 library(vegan)
 
-source("clusteranalysis_functions.R")
+source("03_functions.R")
 
 
 # Data exploration --------------------------------------------------------
@@ -135,7 +135,7 @@ clusterVScode(plants_forests_bray, 6, grunddaten_forests_red, FALSE)
 
 # selected dataset
 hdbscan_complete(plants_dist = weight_rel_dist(data_list[["forest_AG_c(0,1)"]][[1]]),
-                 grunddat = data_list[["forest_AG_c(0,1)"]][[2]], coarse = TRUE, bund = FALSE, by = 1)
+                 grunddat = data_list[["forest_AG_c(0,1)"]][[2]], coarse = TRUE, bund = FALSE, by = 1, print = FALSE)
 
 clusterVScode(plants_dist = weight_rel_dist(data_list[["forest_AG_c(0,1)"]][[1]]),
               grunddat = data_list[["forest_AG_c(0,1)"]][[2]], pts = 11, bund = FALSE)
@@ -367,7 +367,7 @@ table(as.numeric(plants_second_max)) # I need to check the 1 and 2s
 
 # use a weighting scheme that also emphasizes lower maximal abundances and cluster extracted observations
 plant_dist_second <- max_weighting(plants_mat=plants_second_round)
-hdbscan_complete(plant_dist_second, grunddat = grunddat_second_round,coarse = TRUE, bund = FALSE, kstop = 13)
+hdbscan_complete(plant_dist_second, grunddat = grunddat_second_round,coarse = TRUE, bund = FALSE, kstop = 13, print = FALSE)
 # too large noise cluster
 
 # Test Predictions -------------------------------------------------------------
